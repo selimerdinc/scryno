@@ -1,0 +1,81 @@
+{
+  "name": "scryno",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Free desktop app for mirroring and controlling mobile devices",
+  "author": "Scryno",
+  "license": "MIT",
+  "homepage": "https://github.com/selimerdinc/scryno",
+  "main": "./out/main/index.js",
+  "scripts": {
+    "dev": "node scripts/dev.mjs",
+    "build": "electron-vite build",
+    "preview": "env -u ELECTRON_RUN_AS_NODE electron-vite preview",
+    "fetch-binaries": "node scripts/fetch-binaries.mjs",
+    "brand": "node scripts/brand.mjs",
+    "dist:mac": "node scripts/dist-mac.mjs",
+    "dist:win": "npm run build && electron-builder --win"
+  },
+  "dependencies": {
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "@vitejs/plugin-react": "^4.3.4",
+    "electron": "^34.0.0",
+    "electron-builder": "^25.1.8",
+    "electron-vite": "^2.3.0",
+    "typescript": "^5.7.2",
+    "vite": "^5.4.11"
+  },
+  "build": {
+    "appId": "app.scryno.desktop",
+    "productName": "Scryno",
+    "directories": {
+      "output": "release",
+      "buildResources": "build"
+    },
+    "files": [
+      "out/**/*"
+    ],
+    "extraResources": [
+      {
+        "from": "resources/bin/${os}-${arch}",
+        "to": "bin",
+        "filter": [
+          "**/*"
+        ]
+      }
+    ],
+    "mac": {
+      "category": "public.app-category.developer-tools",
+      "icon": "build/icon.icns",
+      "target": [
+        "dmg"
+      ],
+      "hardenedRuntime": false,
+      "gatekeeperAssess": false,
+      "entitlements": "build/entitlements.mac.plist",
+      "entitlementsInherit": "build/entitlements.mac.plist",
+      "extendInfo": {
+        "NSMicrophoneUsageDescription": "Scryno, telefonun sesini ve mikrofonunu Mac’ten duyurmak için mikrofon erişimi ister.",
+        "NSCameraUsageDescription": "Scryno, telefonun kamerasını yansıtmak için kamera erişimi ister.",
+        "NSScreenCaptureUsageDescription": "Scryno, iPhone Mirroring penceresinin görüntüsünü kaydetmek için ekran kaydı izni ister.",
+        "NSAppleEventsUsageDescription": "Scryno, iPhone Mirroring penceresini açmak ve kapatmak için bu izni kullanır."
+      }
+    },
+    "afterPack": "scripts/after-pack.cjs",
+    "win": {
+      "target": [
+        "nsis"
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true
+    }
+  }
+}

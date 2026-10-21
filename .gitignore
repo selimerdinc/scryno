@@ -1,0 +1,16 @@
+node_modules
+out
+release
+dist
+.DS_Store
+*.log
+*.tsbuildinfo
+resources/bin/**
+!resources/bin/.gitkeep
+.env
+.env.*
+selfIdentity.plist
+
+# Accidental proprietary dumps
+/background.js
+/dist_electron/

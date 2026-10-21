@@ -1,0 +1,110 @@
+html,
+body,
+#root {
+  margin: 0;
+  height: 100%;
+  overflow: hidden;
+  background: transparent;
+  font-family: 'SF Pro Text', 'Segoe UI', system-ui, sans-serif;
+  user-select: none;
+}
+
+.chrome {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 2px;
+  height: 100%;
+  width: 100%;
+  padding: 0 10px 0 12px;
+  box-sizing: border-box;
+  background: linear-gradient(180deg, #2f3f5c 0%, #24344f 100%);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-bottom: 1px solid rgba(0, 0, 0, 0.28);
+  color: #e8eef8;
+  -webkit-app-region: drag;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05);
+}
+
+.chrome-spacer {
+  flex: 1;
+  min-width: 8px;
+}
+
+.chrome-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  -webkit-app-region: no-drag;
+}
+
+.chrome-btn {
+  width: 30px;
+  height: 30px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: rgba(236, 242, 255, 0.88);
+  padding: 0;
+  cursor: pointer;
+  transition:
+    background 0.12s ease,
+    color 0.12s ease,
+    opacity 0.12s ease;
+}
+
+.chrome-btn:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.1);
+  color: #fff;
+}
+
+.chrome-btn:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+.chrome-btn svg {
+  width: 15px;
+  height: 15px;
+  display: block;
+}
+
+.chrome-btn.live {
+  color: #ff8e8e;
+  background: rgba(232, 93, 93, 0.16);
+}
+
+.chrome-btn.live:hover:not(:disabled) {
+  background: rgba(232, 93, 93, 0.28);
+}
+
+.chrome-btn.flash-ok {
+  animation: flashOk 0.5s ease;
+}
+
+.chrome-label {
+  margin-left: 8px;
+  padding-left: 10px;
+  border-left: 1px solid rgba(255, 255, 255, 0.12);
+  font-size: 0.78rem;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  white-space: nowrap;
+  max-width: 140px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: #f2f6ff;
+  -webkit-app-region: no-drag;
+}
+
+@keyframes flashOk {
+  0% {
+    background: rgba(110, 220, 160, 0.35);
+  }
+  100% {
+    background: transparent;
+  }
+}

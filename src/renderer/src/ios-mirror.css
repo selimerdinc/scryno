@@ -1,0 +1,122 @@
+html,
+body,
+#root {
+  margin: 0;
+  height: 100%;
+  background: #000;
+  color: #e8eef4;
+  font-family: 'SF Pro Text', 'Segoe UI', system-ui, sans-serif;
+  user-select: none;
+  overflow: hidden;
+}
+
+.ios-mirror {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+.ios-bar {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  height: 40px;
+  flex-shrink: 0;
+  /* Leaves room for macOS traffic lights (hiddenInset). */
+  padding: 0 10px 0 80px;
+  background: linear-gradient(180deg, #2f3f5c 0%, #24344f 100%);
+  border-bottom: 1px solid rgba(0, 0, 0, 0.28);
+  -webkit-app-region: drag;
+}
+
+.ios-spacer {
+  flex: 1;
+}
+
+.ios-btn {
+  -webkit-app-region: no-drag;
+  width: 30px;
+  height: 30px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: rgba(236, 242, 255, 0.88);
+  padding: 0;
+  cursor: pointer;
+}
+
+.ios-btn:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.1);
+  color: #fff;
+}
+
+.ios-btn:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+.ios-btn svg {
+  width: 15px;
+  height: 15px;
+}
+
+.ios-btn.live {
+  color: #ff5a5f;
+  background: rgba(255, 90, 95, 0.14);
+}
+
+.ios-btn.flash-ok {
+  animation: flashOk 0.5s ease;
+}
+
+.ios-label {
+  margin-left: 8px;
+  padding-left: 10px;
+  border-left: 1px solid rgba(255, 255, 255, 0.12);
+  font-size: 0.78rem;
+  font-weight: 600;
+  white-space: nowrap;
+  max-width: 160px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ios-stage {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #000;
+}
+
+.ios-screen {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  opacity: 0;
+  transition: opacity 0.2s ease;
+}
+
+.ios-screen.ready {
+  opacity: 1;
+}
+
+.ios-loading {
+  position: absolute;
+  color: #8b95a5;
+  font-size: 0.82rem;
+}
+
+@keyframes flashOk {
+  0% {
+    background: rgba(110, 220, 160, 0.35);
+  }
+  100% {
+    background: transparent;
+  }
+}
