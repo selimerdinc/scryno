@@ -38,3 +38,8 @@ npm run dev
 - Kalıcı görüntü ve kayıt ayarları
 - Kablosuz Android bağlantısı, 6 haneli eşleştirme koduyla
 - iPhone Mirroring, büyütme, otomatik kayıt ve pencereyi geri getirme
+
+## Otomatik sürüm
+
+`main` dalına gönderilen her commit, GitHub Actions üzerinde yeni bir macOS DMG üretir ve
+`Scryno 1.0.<build>` adıyla GitHub Releases bölümünde yayınlar.

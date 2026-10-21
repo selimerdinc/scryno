@@ -17,6 +17,8 @@ const root = join(__dirname, '..')
 // Pin versions for reproducible builds.
 const SCRCPY_VERSION = '3.2'
 const PLATFORM_TOOLS_VERSION = '36.0.0'
+const GO_IOS_VERSION = '1.3.2'
+const GO_IOS_MAC_URL = `https://github.com/danielpaulus/go-ios/releases/download/v${GO_IOS_VERSION}/go-ios-mac.zip`
 
 const targets = [
   {
@@ -117,6 +119,14 @@ async function fetchTarget(target) {
       extractArchive(toolsArchive, toolsOut)
     }
 
+    let goIosOut = null
+    if (target.id.startsWith('mac-')) {
+      const goIosArchive = join(tmp, 'go-ios.zip')
+      goIosOut = join(tmp, 'go-ios')
+      await download(GO_IOS_MAC_URL, goIosArchive)
+      extractArchive(goIosArchive, goIosOut)
+    }
+
     // Fresh dest
     rmSync(destDir, { recursive: true, force: true })
     mkdirSync(destDir, { recursive: true })
@@ -130,6 +140,12 @@ async function fetchTarget(target) {
       // Ensure adb exists when scrcpy zip layout nests it.
       const adbSrc = findFile(scrcpyOut, target.adbName)
       copyFileSync(adbSrc, join(destDir, target.adbName))
+    }
+
+    if (goIosOut) {
+      const goIosSrc = findFile(goIosOut, 'ios')
+      copyFileSync(goIosSrc, join(destDir, 'go-ios'))
+      chmodSync(join(destDir, 'go-ios'), 0o755)
     }
 
     if (!target.adbName.endsWith('.exe')) {
