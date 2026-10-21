@@ -32,6 +32,8 @@ if (existsSync(branded) && !existsSync(stock)) {
 run(process.execPath, [
   join(root, 'node_modules', 'electron-builder', 'cli.js'),
   '--mac',
+  '--publish',
+  'never',
   `--config.electronDist=${electronDist}`
 ])
 rmSync(electronDist, { recursive: true, force: true })
