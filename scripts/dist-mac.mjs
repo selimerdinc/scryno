@@ -1,4 +1,4 @@
-import { cpSync, existsSync, renameSync, rmSync } from 'fs'
+import { existsSync, mkdirSync, renameSync, rmSync } from 'fs'
 import { spawnSync } from 'child_process'
 import { dirname, join } from 'path'
 import { fileURLToPath } from 'url'
@@ -22,7 +22,10 @@ run(process.execPath, [join(root, 'scripts', 'brand.mjs')])
 run(process.execPath, [join(root, 'node_modules', 'electron-vite', 'bin', 'electron-vite.js'), 'build'])
 
 rmSync(electronDist, { recursive: true, force: true })
-cpSync(sourceDist, electronDist, { recursive: true })
+mkdirSync(electronDist, { recursive: true })
+// Node's fs.cp rewrites relative framework symlinks as absolute paths. Those paths
+// point at the build machine, so the packaged app cannot load Electron Framework.
+run('/bin/cp', ['-R', `${sourceDist}/.`, electronDist])
 const branded = join(electronDist, 'Scryno.app')
 const stock = join(electronDist, 'Electron.app')
 if (existsSync(branded) && !existsSync(stock)) {
