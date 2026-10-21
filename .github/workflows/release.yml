@@ -74,4 +74,4 @@ jobs:
             --title "Scryno $VERSION" \
             --target "$GITHUB_SHA" \
             --latest \
-            --notes "main dalındaki $GITHUB_SHA commit'i için otomatik macOS Intel sürümü. Apple Silicon Mac'lerde Rosetta ile çalışır."
+            --notes "main dalındaki $GITHUB_SHA commit'i için otomatik macOS Apple Silicon sürümü."

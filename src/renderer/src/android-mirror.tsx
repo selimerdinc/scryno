@@ -60,6 +60,49 @@ function readQuery(): { deviceId: string; label: string; control: boolean } {
   }
 }
 
+let liveRecorder: MediaRecorder | null = null
+
+function beginMirrorRecording(canvas: HTMLCanvasElement, audioTracks: MediaStreamTrack[]): void {
+  if (liveRecorder && liveRecorder.state === 'recording') {
+    return
+  }
+  const stream = canvas.captureStream(60)
+  for (const track of audioTracks) {
+    stream.addTrack(track)
+  }
+  const mimeType = RECORDING_TYPES.find((type) => MediaRecorder.isTypeSupported(type)) ?? ''
+  const chunks: Blob[] = []
+  const active = new MediaRecorder(stream, { mimeType, videoBitsPerSecond: 8_000_000 })
+  active.ondataavailable = (event) => {
+    if (event.data.size > 0) {
+      chunks.push(event.data)
+    }
+  }
+  active.onstop = () => {
+    if (liveRecorder === active) {
+      liveRecorder = null
+    }
+    const blob = new Blob(chunks, { type: active.mimeType })
+    void blob.arrayBuffer().then((buffer) =>
+      window.scryno.androidMirror.saveRecording(
+        new Uint8Array(buffer),
+        active.mimeType.startsWith('video/mp4') ? 'mp4' : 'webm'
+      )
+    )
+  }
+  active.start(1000)
+  liveRecorder = active
+}
+
+function endMirrorRecording(): void {
+  const active = liveRecorder
+  if (!active || active.state !== 'recording') {
+    return
+  }
+  liveRecorder = null
+  active.stop()
+}
+
 function send(input: MirrorInput): void {
   window.scryno.androidMirror.sendInput(input)
 }
@@ -170,7 +213,6 @@ function AndroidMirrorApp(): JSX.Element {
   const stageRef = useRef<HTMLDivElement>(null)
   const videoSize = useRef({ width: 0, height: 0 })
   const audioOutput = useRef<MediaStreamAudioDestinationNode | null>(null)
-  const recorder = useRef<MediaRecorder | null>(null)
   const pointerDown = useRef(false)
 
   const showNotice = useCallback((text: string) => {
@@ -300,36 +342,16 @@ function AndroidMirrorApp(): JSX.Element {
   }, [])
 
   useEffect(() => {
+    if (liveRecorder?.state === 'recording') {
+      setRecording(true)
+    }
     return window.scryno.androidMirror.onRecord((action) => {
       const canvas = canvasRef.current
       if (action === 'start' && canvas) {
-        const stream = canvas.captureStream(60)
-        for (const track of audioOutput.current?.stream.getAudioTracks() ?? []) {
-          stream.addTrack(track)
-        }
-        const mimeType = RECORDING_TYPES.find((type) => MediaRecorder.isTypeSupported(type)) ?? ''
-        const chunks: Blob[] = []
-        const active = new MediaRecorder(stream, { mimeType, videoBitsPerSecond: 8_000_000 })
-        active.ondataavailable = (event) => {
-          if (event.data.size > 0) {
-            chunks.push(event.data)
-          }
-        }
-        active.onstop = () => {
-          const blob = new Blob(chunks, { type: active.mimeType })
-          void blob.arrayBuffer().then((buffer) =>
-            window.scryno.androidMirror.saveRecording(
-              new Uint8Array(buffer),
-              active.mimeType.startsWith('video/mp4') ? 'mp4' : 'webm'
-            )
-          )
-        }
-        active.start(1000)
-        recorder.current = active
+        beginMirrorRecording(canvas, audioOutput.current?.stream.getAudioTracks() ?? [])
         setRecording(true)
       } else if (action === 'stop') {
-        recorder.current?.stop()
-        recorder.current = null
+        endMirrorRecording()
         setRecording(false)
       }
     })
@@ -527,6 +549,9 @@ function AndroidMirrorApp(): JSX.Element {
         const result = await window.scryno.startRecording(deviceId)
         if (!result.ok) {
           showNotice(result.message)
+        } else if (result.stopped) {
+          setRecording(false)
+          void window.scryno.revealCapture(result.path)
         }
       }
     } finally {

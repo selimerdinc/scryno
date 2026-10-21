@@ -341,9 +341,6 @@ function registerIpc(): void {
           return { ok: true as const, session }
         }
         const session = await startScrcpySession(deviceId, options ?? {}, label || deviceId)
-        if (options?.record) {
-          startMirrorRecording(deviceId)
-        }
         scheduleMirrorAlign()
         return { ok: true as const, session }
       } catch (error) {
@@ -527,6 +524,15 @@ function registerIpc(): void {
           ok: false as const,
           code: 'INVALID_DEVICE',
           message: 'Geçersiz cihaz kimliği'
+        }
+      }
+      if (isRecordingFor(deviceId)) {
+        const result = await stopRecordingFor(deviceId)
+        return {
+          ok: true as const,
+          stopped: true,
+          path: result.path,
+          message: `Kayıt kaydedildi: ${result.path}`
         }
       }
       startRecordingFor(deviceId)

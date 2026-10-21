@@ -160,7 +160,12 @@ function IosMirrorApp(): JSX.Element {
         setRecording(false)
       } else {
         const result = await window.scryno.startRecording(deviceId)
-        setRecording(result.ok)
+        if (result.ok && result.stopped) {
+          setRecording(false)
+          void window.scryno.revealCapture(result.path)
+        } else {
+          setRecording(result.ok)
+        }
       }
     } finally {
       setBusy(false)

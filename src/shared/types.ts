@@ -60,7 +60,7 @@ export interface MirrorOptions {
   source?: MirrorSource
   /** Camera lens when source is camera. */
   cameraFacing?: 'back' | 'front'
-  /** Package or app name started on a virtual display. */
+  /** Package opened on the mirrored display when the session starts. */
   startApp?: string
   /** Locks capture independently from device rotation. */
   orientation?: MirrorOrientation
@@ -125,6 +125,8 @@ export interface CaptureFileResult {
   path: string
   message: string
   copiedToClipboard?: boolean
+  /** The record button ended a recording that was already running. */
+  stopped?: boolean
 }
 
 export type CaptureFileResponse = CaptureFileResult | ApiError

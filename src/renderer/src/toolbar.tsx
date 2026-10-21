@@ -145,7 +145,12 @@ function ToolbarApp(): JSX.Element {
         if (!result.ok) {
           return
         }
-        setRecording(true)
+        if (result.stopped) {
+          setRecording(false)
+          await window.scryno.revealCapture(result.path)
+        } else {
+          setRecording(true)
+        }
       }
     } finally {
       setBusy(false)

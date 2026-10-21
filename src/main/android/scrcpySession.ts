@@ -25,6 +25,7 @@ const CONTROL_INJECT_SCROLL = 3
 const CONTROL_BACK_OR_SCREEN_ON = 4
 const CONTROL_EXPAND_NOTIFICATIONS = 5
 const CONTROL_SET_CLIPBOARD = 9
+const CONTROL_START_APP = 16
 
 const DEVICE_MESSAGE_CLIPBOARD = 0
 const DEVICE_MESSAGE_ACK_CLIPBOARD = 1
@@ -91,6 +92,8 @@ interface ActiveSession {
   options: MirrorOptions
   clipboardSequence: bigint
   recording: boolean
+  autoRecordArmed: boolean
+  stopPromise: Promise<{ path: string }> | null
   pendingRecording: {
     resolve: (path: string) => void
     reject: (error: Error) => void
@@ -172,7 +175,6 @@ function buildServerArgs(
           }
         )
       }
-      args.push(`start_app=${startApp}`)
     }
     switch (options.orientation) {
       case 'initial':
@@ -259,6 +261,21 @@ function sendControl(session: ActiveSession, message: Buffer): void {
   if (session.control && !session.control.destroyed) {
     session.control.write(message)
   }
+}
+
+function startAppMessage(name: string): Buffer {
+  const content = Buffer.from(name, 'utf8')
+  if (content.length === 0 || content.length > 255) {
+    throw Object.assign(
+      new Error('Uygulama adı paket biçiminde olmalı. Örnek: com.android.chrome'),
+      { code: 'INVALID_APP' }
+    )
+  }
+  const message = Buffer.alloc(2 + content.length)
+  message.writeUInt8(CONTROL_START_APP, 0)
+  message.writeUInt8(content.length, 1)
+  content.copy(message, 2)
+  return message
 }
 
 function fixedPoint16(value: number): number {
@@ -369,7 +386,19 @@ function registerMirrorIpc(): void {
   ipcRegistered = true
 
   ipcMain.on('android-mirror:ready', (event) => {
-    sessionForSender(event)?.startStreaming?.()
+    const session = sessionForSender(event)
+    if (!session) {
+      return
+    }
+    session.startStreaming?.()
+    if (session.options.record && !session.autoRecordArmed) {
+      session.autoRecordArmed = true
+      try {
+        startMirrorRecording(session.info.deviceId)
+      } catch {
+        session.autoRecordArmed = false
+      }
+    }
   })
 
   ipcMain.on('android-mirror:input', (event, input: MirrorInput) => {
@@ -566,6 +595,8 @@ export async function startScrcpySession(
     options,
     clipboardSequence: 0n,
     recording: false,
+    autoRecordArmed: false,
+    stopPromise: null,
     pendingRecording: null,
     startStreaming: null,
     closing: false
@@ -598,6 +629,10 @@ export async function startScrcpySession(
     }
     videoWidth = codec.readUInt32BE(4)
     videoHeight = codec.readUInt32BE(8)
+    const startApp = options.startApp?.trim() ?? ''
+    if (startApp && session.control) {
+      sendControl(session, startAppMessage(startApp))
+    }
   } catch (error) {
     session.closing = true
     for (const socket of session.sockets) {
@@ -703,7 +738,7 @@ export function startMirrorRecording(deviceId: string): void {
       code: 'SESSION_NOT_FOUND'
     })
   }
-  if (session.recording) {
+  if (session.recording || session.stopPromise) {
     throw Object.assign(new Error('Bu cihaz için zaten kayıt var'), {
       code: 'RECORDING_EXISTS'
     })
@@ -714,32 +749,48 @@ export function startMirrorRecording(deviceId: string): void {
 
 export function stopMirrorRecording(deviceId: string): Promise<{ path: string }> {
   const session = sessions.get(deviceId)
-  if (!session?.recording || !session.window || session.window.isDestroyed()) {
+  if (!session?.window || session.window.isDestroyed()) {
     return Promise.reject(
       Object.assign(new Error('Aktif kayıt yok'), {
         code: 'RECORDING_NOT_FOUND'
       })
     )
   }
-  session.recording = false
+  if (session.stopPromise) {
+    return session.stopPromise
+  }
+  if (!session.recording) {
+    return Promise.reject(
+      Object.assign(new Error('Aktif kayıt yok'), {
+        code: 'RECORDING_NOT_FOUND'
+      })
+    )
+  }
   const win = session.window
-  return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => {
+  const pending = new Promise<{ path: string }>((resolve, reject) => {
+    const finish = (settle: () => void): void => {
+      session.recording = false
       session.pendingRecording = null
-      reject(new Error('Kayıt dosyası alınamadı'))
+      session.stopPromise = null
+      settle()
+    }
+    const timer = setTimeout(() => {
+      finish(() => reject(new Error('Kayıt dosyası alınamadı')))
     }, 20_000)
     session.pendingRecording = {
       resolve: (path) => {
         clearTimeout(timer)
-        resolve({ path })
+        finish(() => resolve({ path }))
       },
       reject: (error) => {
         clearTimeout(timer)
-        reject(error)
+        finish(() => reject(error))
       }
     }
     win.webContents.send('android-mirror:record', 'stop')
   })
+  session.stopPromise = pending
+  return pending
 }
 
 export function getMirrorWindow(deviceId: string): BrowserWindow | null {
