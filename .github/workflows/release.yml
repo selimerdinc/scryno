@@ -15,15 +15,15 @@ concurrency:
 
 jobs:
   release:
-    runs-on: macos-14
+    runs-on: macos-15
     timeout-minutes: 45
 
     steps:
       - name: Kaynak kodu al
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Node.js kur
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
           node-version: 24
           cache: npm
@@ -41,7 +41,13 @@ jobs:
           echo "tag=build-$GITHUB_RUN_NUMBER" >> "$GITHUB_OUTPUT"
 
       - name: macOS araçlarını hazırla
-        run: npm run fetch-binaries -- mac-x64
+        shell: bash
+        run: |
+          if [ "$(uname -m)" = "arm64" ]; then
+            npm run fetch-binaries -- mac-arm64
+          else
+            npm run fetch-binaries -- mac-x64
+          fi
 
       - name: DMG oluştur
         env:
