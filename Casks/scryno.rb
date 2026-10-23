@@ -1,9 +1,9 @@
 cask "scryno" do
   arch arm: "-arm64", intel: ""
 
-  version "1.0.8"
-  sha256 arm:   "42718c27bda2b692d8a1b861a979be80496b1b7ac90672ae5b82a24487aa1f9f",
-         intel: "42718c27bda2b692d8a1b861a979be80496b1b7ac90672ae5b82a24487aa1f9f"
+  version "1.0.9"
+  sha256 arm:   "020f1c74a002bbbb9e6170da25f6c75242263732712b89069213c5b9fbce96f5",
+         intel: "020f1c74a002bbbb9e6170da25f6c75242263732712b89069213c5b9fbce96f5"
 
   url "https://github.com/selimerdinc/scryno/releases/download/build-#{version.sub(/^1\.0\./, '')}/Scryno-#{version}#{arch}.dmg"
   name "Scryno"
