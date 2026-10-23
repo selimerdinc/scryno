@@ -81,11 +81,20 @@ export interface ScrynoApi {
   revealCapture: (filePath: string) => Promise<CaptureFileResponse>
   startRecording: (deviceId: string) => Promise<CaptureFileResponse>
   stopRecording: (deviceId: string) => Promise<CaptureFileResponse>
+  saveScreenshotData: (data: Uint8Array, deviceId?: string) => Promise<CaptureFileResponse>
+  saveRecordingData: (
+    data: Uint8Array,
+    extension: string,
+    deviceId?: string
+  ) => Promise<CaptureFileResponse>
+  toggleOverlay: (deviceId: string) => Promise<{ ok: boolean; open?: boolean }>
+  setIgnoreMouseEvents: (ignore: boolean, forward?: boolean) => void
   setToolbarOrientation: (
     deviceId: string,
     orientation: 'horizontal' | 'vertical'
   ) => Promise<{ ok: true; orientation: 'horizontal' | 'vertical' } | { ok: false; message: string }>
   onToolbarStatus: (listener: (payload: ToolbarStatusPayload) => void) => () => void
+  notifyReady?: () => void
 }
 
 const api: ScrynoApi = {
@@ -124,6 +133,13 @@ const api: ScrynoApi = {
   revealCapture: (filePath) => ipcRenderer.invoke('media:reveal', filePath),
   startRecording: (deviceId) => ipcRenderer.invoke('media:record-start', deviceId),
   stopRecording: (deviceId) => ipcRenderer.invoke('media:record-stop', deviceId),
+  saveScreenshotData: (data, deviceId) =>
+    ipcRenderer.invoke('media:save-screenshot-data', data, deviceId),
+  saveRecordingData: (data, extension, deviceId) =>
+    ipcRenderer.invoke('media:save-recording-data', data, extension, deviceId),
+  toggleOverlay: (deviceId) => ipcRenderer.invoke('mirror:toggle-overlay', deviceId),
+  setIgnoreMouseEvents: (ignore, forward) =>
+    ipcRenderer.send('overlay:ignore-mouse-events', ignore, forward),
   setToolbarOrientation: (deviceId, orientation) =>
     ipcRenderer.invoke('toolbar:orientation', deviceId, orientation),
   onToolbarStatus: (listener) => {
@@ -134,7 +150,8 @@ const api: ScrynoApi = {
     return () => {
       ipcRenderer.removeListener('toolbar:status', handler)
     }
-  }
+  },
+  notifyReady: () => ipcRenderer.send('app:ready')
 }
 
 contextBridge.exposeInMainWorld('scryno', api)

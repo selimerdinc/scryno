@@ -10,6 +10,7 @@ import { dirname, join } from 'path'
 const root = join(dirname(fileURLToPath(import.meta.url)), '..')
 const env = { ...process.env }
 delete env.ELECTRON_RUN_AS_NODE
+delete process.env.ELECTRON_RUN_AS_NODE
 
 execFileSync(process.execPath, [join(root, 'scripts', 'brand.mjs'), '--dev'], { stdio: 'inherit' })
 

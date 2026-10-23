@@ -13,6 +13,11 @@ import { createRoot } from 'react-dom/client'
 import type { MirrorInput } from '../../shared/types'
 import './ios-mirror.css'
 import './android-mirror.css'
+import './annotation.css'
+import { AnnotationOverlay, type AnnotationOverlayHandle } from './components/AnnotationOverlay'
+import { AnnotationToolbar } from './components/AnnotationToolbar'
+import type { AnnotationShape, AnnotationTool, Point } from './types/annotation'
+import { renderAnnotationShapes } from './utils/renderAnnotations'
 
 const ACTION_DOWN = 0
 const ACTION_UP = 1
@@ -200,6 +205,21 @@ function IconFolder(): JSX.Element {
   )
 }
 
+function IconDraw(): JSX.Element {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <path
+        d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"
+        stroke="currentColor"
+        strokeWidth="1.6"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+      <path d="m14 6 4 4" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+    </svg>
+  )
+}
+
 function AndroidMirrorApp(): JSX.Element {
   const { deviceId, label, control } = useMemo(() => readQuery(), [])
   const [ready, setReady] = useState(false)
@@ -208,6 +228,18 @@ function AndroidMirrorApp(): JSX.Element {
   const [recording, setRecording] = useState(false)
   const [dropping, setDropping] = useState(false)
   const [notice, setNotice] = useState('')
+
+  const [showAnnotationBar, setShowAnnotationBar] = useState(false)
+  const [annTool, setAnnTool] = useState<AnnotationTool>('pen')
+  const [annColor, setAnnColor] = useState('#ef4444')
+  const [annWidth, setAnnWidth] = useState(6)
+  const [annLaser, setAnnLaser] = useState(false)
+  const [annShapesCount, setAnnShapesCount] = useState(0)
+
+  const overlayRef = useRef<AnnotationOverlayHandle>(null)
+  const shapesRef = useRef<AnnotationShape[]>([])
+  const laserModeRef = useRef(false)
+  laserModeRef.current = annLaser
 
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const stageRef = useRef<HTMLDivElement>(null)
@@ -221,16 +253,58 @@ function AndroidMirrorApp(): JSX.Element {
   }, [])
 
   useEffect(() => {
+    if (!showAnnotationBar) {
+      return
+    }
+    const handleKeyDown = (e: KeyboardEvent): void => {
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) {
+        return
+      }
+      if (e.key === 'Escape') {
+        setShowAnnotationBar(false)
+        overlayRef.current?.clear()
+      } else if (e.key === 't' || e.key === 'T' || e.key === 'v' || e.key === 'V' || e.key === ' ') {
+        setAnnTool('select')
+      } else if (e.key === 'r' || e.key === 'R') {
+        setAnnTool('rect')
+      } else if (e.key === 'p' || e.key === 'P') {
+        setAnnTool('pen')
+      } else if (e.key === 'h' || e.key === 'H') {
+        setAnnTool('highlighter')
+      } else if (e.key === 'c' || e.key === 'C') {
+        overlayRef.current?.clear()
+      } else if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'z') {
+        overlayRef.current?.undo()
+      }
+    }
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [showAnnotationBar])
+
+  useEffect(() => {
     const canvas = canvasRef.current
-    const context = canvas?.getContext('2d')
+    const context = canvas?.getContext('2d', { desynchronized: true, alpha: false })
     if (!canvas || !context) {
       return
     }
     let decoder: VideoDecoder | null = null
     let pendingConfig: Uint8Array | null = null
     let waitingForKey = true
+    let latestFrame: VideoFrame | null = null
+    let rafId: number | null = null
+    let destroyed = false
 
-    const draw = (frame: VideoFrame): void => {
+    const renderLoop = (): void => {
+      if (destroyed) {
+        return
+      }
+      rafId = requestAnimationFrame(renderLoop)
+      if (!latestFrame) {
+        return
+      }
+      const frame = latestFrame
+      latestFrame = null
+
       if (canvas.width !== frame.displayWidth || canvas.height !== frame.displayHeight) {
         canvas.width = frame.displayWidth
         canvas.height = frame.displayHeight
@@ -242,15 +316,36 @@ function AndroidMirrorApp(): JSX.Element {
       }
       context.drawImage(frame, 0, 0)
       frame.close()
+      const shapes = shapesRef.current
+      const activeShape = overlayRef.current?.getActiveShape()
+      const allShapes = activeShape ? [...shapes, activeShape] : shapes
+      if (allShapes.length > 0) {
+        renderAnnotationShapes(context, allShapes, canvas.width, canvas.height, {
+          fadeDuration: laserModeRef.current ? 3000 : 0
+        })
+      }
       setReady(true)
+    }
+    rafId = requestAnimationFrame(renderLoop)
+
+    const onFrameDecoded = (frame: VideoFrame): void => {
+      // Discard previous unrendered frame to eliminate any buffer queue latency (e.g. during Teams screen share)
+      if (latestFrame) {
+        latestFrame.close()
+      }
+      latestFrame = frame
     }
 
     const off = window.scryno.androidMirror.onVideo((packet) => {
       if (packet.config) {
         pendingConfig = packet.data
+        if (latestFrame) {
+          latestFrame.close()
+          latestFrame = null
+        }
         decoder?.close()
         decoder = new VideoDecoder({
-          output: draw,
+          output: onFrameDecoded,
           error: () => {
             waitingForKey = true
           }
@@ -266,6 +361,21 @@ function AndroidMirrorApp(): JSX.Element {
       if (!decoder || decoder.state !== 'configured' || (waitingForKey && !packet.key)) {
         return
       }
+
+      // If decoder queue is backing up (e.g. Teams screen sharing GPU contention):
+      if (decoder.decodeQueueSize > 2) {
+        if (packet.key) {
+          decoder.reset()
+          decoder.configure({
+            codec: codecFromConfig(pendingConfig || packet.data),
+            optimizeForLatency: true,
+            hardwareAcceleration: 'prefer-hardware'
+          })
+        } else {
+          return
+        }
+      }
+
       waitingForKey = false
       const data = pendingConfig ? concat(pendingConfig, packet.data) : packet.data
       pendingConfig = null
@@ -275,6 +385,14 @@ function AndroidMirrorApp(): JSX.Element {
     })
 
     return () => {
+      destroyed = true
+      if (rafId !== null) {
+        cancelAnimationFrame(rafId)
+      }
+      if (latestFrame) {
+        latestFrame.close()
+        latestFrame = null
+      }
       off()
       if (decoder && decoder.state !== 'closed') {
         decoder.close()
@@ -307,8 +425,8 @@ function AndroidMirrorApp(): JSX.Element {
       }
       // Keep a short cushion so network jitter does not click, and drop it when it drifts too far behind.
       const now = audioContext.currentTime
-      if ((nextStart < now + 0.02) || (nextStart > now + 0.3)) {
-        nextStart = now + 0.06
+      if ((nextStart < now + 0.01) || (nextStart > now + 0.15)) {
+        nextStart = now + 0.03
       }
       source.start(nextStart)
       nextStart += buffer.duration
@@ -353,6 +471,21 @@ function AndroidMirrorApp(): JSX.Element {
       } else if (action === 'stop') {
         endMirrorRecording()
         setRecording(false)
+        overlayRef.current?.clear()
+      }
+    })
+  }, [])
+
+  useEffect(() => {
+    return window.scryno.onToolbarStatus((payload) => {
+      if (!payload.recording) {
+        overlayRef.current?.clear()
+      }
+      if (
+        payload.kind === 'ok' &&
+        (payload.message?.includes('Kaydedildi') || payload.message?.includes('Ekran görüntüsü'))
+      ) {
+        overlayRef.current?.clear()
       }
     })
   }, [])
@@ -384,6 +517,26 @@ function AndroidMirrorApp(): JSX.Element {
     []
   )
 
+  const toDeviceNorm = useCallback(
+    (clientX: number, clientY: number): Point | null => {
+      const pt = toDevice(clientX, clientY, true)
+      const { width, height } = videoSize.current
+      if (!pt || !width || !height) {
+        return null
+      }
+      return {
+        x: Math.max(0, Math.min(1, pt.x / width)),
+        y: Math.max(0, Math.min(1, pt.y / height))
+      }
+    },
+    [toDevice]
+  )
+
+  const onShapesChange = useCallback((shapes: AnnotationShape[]) => {
+    shapesRef.current = shapes
+    setAnnShapesCount(shapes.length)
+  }, [])
+
   const sendTouch = useCallback(
     (action: number, point: { x: number; y: number }, buttons: number) => {
       const { width, height } = videoSize.current
@@ -398,6 +551,9 @@ function AndroidMirrorApp(): JSX.Element {
       return
     }
     const onWheel = (event: WheelEvent): void => {
+      if (showAnnotationBar && annTool !== 'select') {
+        return
+      }
       event.preventDefault()
       const point = toDevice(event.clientX, event.clientY, false)
       if (!point) {
@@ -418,7 +574,7 @@ function AndroidMirrorApp(): JSX.Element {
     }
     stage.addEventListener('wheel', onWheel, { passive: false })
     return () => stage.removeEventListener('wheel', onWheel)
-  }, [control, toDevice])
+  }, [control, toDevice, showAnnotationBar, annTool])
 
   useEffect(() => {
     if (!control) {
@@ -478,7 +634,7 @@ function AndroidMirrorApp(): JSX.Element {
   }, [control])
 
   const onPointerDown = (event: PointerEvent<HTMLDivElement>): void => {
-    if (!control) {
+    if (!control || (showAnnotationBar && annTool !== 'select')) {
       return
     }
     if (event.button === 2) {
@@ -522,11 +678,44 @@ function AndroidMirrorApp(): JSX.Element {
   const takeShot = useCallback(async () => {
     setBusy(true)
     try {
+      const canvas = canvasRef.current
+      const shapes = overlayRef.current?.getShapes() ?? []
+      const activeShape = overlayRef.current?.getActiveShape()
+      const allShapes = activeShape ? [...shapes, activeShape] : shapes
+
+      if (canvas && canvas.width > 0 && canvas.height > 0) {
+        const off = document.createElement('canvas')
+        off.width = canvas.width
+        off.height = canvas.height
+        const offCtx = off.getContext('2d')
+        if (offCtx) {
+          offCtx.drawImage(canvas, 0, 0)
+          if (allShapes.length > 0) {
+            renderAnnotationShapes(offCtx, allShapes, off.width, off.height)
+          }
+          const blob = await new Promise<Blob | null>((resolve) =>
+            off.toBlob(resolve, 'image/png')
+          )
+          if (blob) {
+            const buffer = new Uint8Array(await blob.arrayBuffer())
+            const result = await window.scryno.saveScreenshotData(buffer, deviceId)
+            if (result.ok) {
+              setFlash(true)
+              window.setTimeout(() => setFlash(false), 500)
+              showNotice('Ekran görüntüsü kaydedildi ve panoya kopyalandı')
+              overlayRef.current?.clear()
+              return
+            }
+          }
+        }
+      }
+
       const result = await window.scryno.takeScreenshot(deviceId, 'android')
       if (result.ok) {
         setFlash(true)
         window.setTimeout(() => setFlash(false), 500)
         showNotice('Ekran görüntüsü kaydedildi ve panoya kopyalandı')
+        overlayRef.current?.clear()
       } else {
         showNotice(result.message)
       }
@@ -540,6 +729,7 @@ function AndroidMirrorApp(): JSX.Element {
     try {
       if (recording) {
         const result = await window.scryno.stopRecording(deviceId)
+        overlayRef.current?.clear()
         if (result.ok) {
           void window.scryno.revealCapture(result.path)
         } else {
@@ -551,6 +741,7 @@ function AndroidMirrorApp(): JSX.Element {
           showNotice(result.message)
         } else if (result.stopped) {
           setRecording(false)
+          overlayRef.current?.clear()
           void window.scryno.revealCapture(result.path)
         }
       }
@@ -602,6 +793,24 @@ function AndroidMirrorApp(): JSX.Element {
         ) : null}
         <button
           type="button"
+          className={`ios-btn ${showAnnotationBar ? 'live' : ''}`}
+          disabled={busy}
+          title={showAnnotationBar ? 'Çizim çubuğunu gizle' : 'Çizim & Vurgu Araçları'}
+          aria-label="Çizim Araçları"
+          onClick={() => {
+            setShowAnnotationBar((prev) => {
+              const next = !prev
+              if (next && annTool === 'select') {
+                setAnnTool('pen')
+              }
+              return next
+            })
+          }}
+        >
+          <IconDraw />
+        </button>
+        <button
+          type="button"
           className={`ios-btn ${flash ? 'flash-ok' : ''}`}
           disabled={busy}
           title="Ekran görüntüsü (pano + İndirilenler)"
@@ -646,10 +855,40 @@ function AndroidMirrorApp(): JSX.Element {
         onDrop={(event) => void onDrop(event)}
       >
         <canvas ref={canvasRef} className={`ios-screen ${ready ? 'ready' : ''}`} />
+        <AnnotationOverlay
+          ref={overlayRef}
+          tool={showAnnotationBar ? annTool : 'select'}
+          color={annColor}
+          strokeWidth={annWidth}
+          laserMode={annLaser}
+          toDeviceNorm={toDeviceNorm}
+          onShapesChange={onShapesChange}
+        />
         {!ready ? <div className="ios-loading">Ekran bağlanıyor…</div> : null}
         {dropping ? <div className="android-drop">Bırak · APK kurulur, diğer dosyalar İndirilenler’e gider</div> : null}
         {notice ? <div className="android-notice">{notice}</div> : null}
       </div>
+      {showAnnotationBar ? (
+        <AnnotationToolbar
+          tool={annTool}
+          onSelectTool={setAnnTool}
+          color={annColor}
+          onSelectColor={setAnnColor}
+          strokeWidth={annWidth}
+          onSelectStrokeWidth={setAnnWidth}
+          laserMode={annLaser}
+          onToggleLaserMode={() => setAnnLaser((prev) => !prev)}
+          onUndo={() => overlayRef.current?.undo()}
+          canUndo={annShapesCount > 0}
+          onClear={() => overlayRef.current?.clear()}
+          canClear={annShapesCount > 0}
+          onSnapshot={() => void takeShot()}
+          onClose={() => {
+            setShowAnnotationBar(false)
+            setAnnTool('select')
+          }}
+        />
+      ) : null}
     </div>
   )
 }

@@ -21,6 +21,7 @@ export default defineConfig({
         input: {
           index: resolve('src/renderer/index.html'),
           toolbar: resolve('src/renderer/toolbar.html'),
+          overlay: resolve('src/renderer/overlay.html'),
           'ios-mirror': resolve('src/renderer/ios-mirror.html'),
           'android-mirror': resolve('src/renderer/android-mirror.html')
         }

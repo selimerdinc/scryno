@@ -70,14 +70,19 @@ func readFrame(_ raw: [String: Any]) -> CGRect? {
   return rect
 }
 
-func frameIsOnADisplay(_ frame: CGRect) -> Bool {
-  let cocoa = cocoaRect(frame)
-  return NSScreen.screens.contains { $0.frame.intersects(cocoa) }
+func primaryScreen() -> NSScreen {
+  NSScreen.screens.first(where: { $0.frame.origin == .zero }) ?? NSScreen.screens.first ?? NSScreen.main!
+}
+
+func primaryHeight() -> CGFloat {
+  primaryScreen().frame.height
+}
+
+func cocoaRect(_ rect: CGRect) -> NSRect {
+  NSRect(x: rect.minX, y: primaryHeight() - rect.maxY, width: rect.width, height: rect.height)
 }
 
 func findTarget(needle: String) -> Target? {
-  // optionAll: a window dragged onto another display can report isOnscreen=false
-  // while still sitting on that display. On-screen matches win; the rest are fallback.
   let options = CGWindowListOption(arrayLiteral: .excludeDesktopElements)
   guard let info = CGWindowListCopyWindowInfo(options, kCGNullWindowID) as? [[String: Any]] else {
     return nil
@@ -90,21 +95,17 @@ func findTarget(needle: String) -> Target? {
     guard layer == 0, pid != ownPid, let frame = readFrame(window), frame.width >= 160, frame.height >= 160 else {
       continue
     }
-    guard frameIsOnADisplay(frame) else {
-      continue
-    }
     let owner = (window[kCGWindowOwnerName as String] as? String) ?? ""
     let name = (window[kCGWindowName as String] as? String) ?? ""
     let windowID = (window[kCGWindowNumber as String] as? NSNumber)?.uint32Value ?? 0
     let target = Target(windowID: windowID, pid: pid, frame: frame)
     let onScreen = (window[kCGWindowIsOnscreen as String] as? Bool) == true
-    let slot = onScreen ? best : fallback
 
     if needle == iphoneMirroringNeedle {
-      if owner == "iPhone Mirroring" && !name.contains("Welcome") && slot == nil {
-        if onScreen {
+      if owner == "iPhone Mirroring" && !name.contains("Welcome") {
+        if onScreen && best == nil {
           best = target
-        } else if best == nil {
+        } else if fallback == nil {
           fallback = target
         }
       }
@@ -113,7 +114,7 @@ func findTarget(needle: String) -> Target? {
     if !needle.isEmpty && name.contains(needle) {
       if onScreen && best == nil {
         best = target
-      } else if !onScreen && best == nil && fallback == nil {
+      } else if fallback == nil {
         fallback = target
       }
     } else if owner.lowercased().contains("scrcpy") && fallback == nil && best == nil {
@@ -128,21 +129,13 @@ func refreshTarget(_ target: Target) -> Target? {
     let info = CGWindowListCopyWindowInfo([.optionIncludingWindow], target.windowID) as? [[String: Any]],
     let raw = info.first,
     let frame = readFrame(raw),
-    frameIsOnADisplay(frame)
+    frame.width >= 100, frame.height >= 100
   else {
     return nil
   }
   var updated = target
   updated.frame = frame
   return updated
-}
-
-func primaryHeight() -> CGFloat {
-  NSScreen.screens.first?.frame.height ?? 0
-}
-
-func cocoaRect(_ rect: CGRect) -> NSRect {
-  NSRect(x: rect.minX, y: primaryHeight() - rect.maxY, width: rect.width, height: rect.height)
 }
 
 /// Usable area of a screen in CoreGraphics space (origin top-left, y down).
@@ -170,9 +163,7 @@ func screen(containing point: CGPoint) -> NSScreen? {
   }
 }
 
-/// Keeps the window inside the screen the drag bar is on.
-/// A tall window's center can still be on the screen below, so the bar — not the center —
-/// decides which display it may enter.
+/// Keeps the window reachable on whatever display it is positioned.
 func clampOrigin(_ origin: CGPoint, size: CGSize) -> CGPoint {
   let bar = CGPoint(x: origin.x + size.width / 2, y: origin.y - barHeight / 2)
   let center = CGPoint(x: origin.x + size.width / 2, y: origin.y + size.height / 2)
@@ -183,11 +174,11 @@ func clampOrigin(_ origin: CGPoint, size: CGSize) -> CGPoint {
   var x = origin.x
   var y = origin.y
   let minY = visible.minY + barHeight
-  let maxY = visible.maxY - size.height
-  let minX = visible.minX
-  let maxX = visible.maxX - size.width
-  y = minY <= maxY ? min(max(y, minY), maxY) : minY
-  x = minX <= maxX ? min(max(x, minX), maxX) : minX
+  let maxY = max(minY, visible.maxY - 120)
+  y = min(max(y, minY), maxY)
+  let minX = visible.minX - size.width + 120
+  let maxX = visible.maxX - 120
+  x = min(max(x, minX), maxX)
   return CGPoint(x: x, y: y)
 }
 
@@ -452,11 +443,11 @@ final class ChromeController: NSObject, DragSurfaceDelegate {
     panel.isOpaque = false
     panel.backgroundColor = .clear
     panel.hasShadow = true
-    panel.level = .normal
+    panel.level = .floating
     panel.hidesOnDeactivate = false
     panel.isMovable = false
     panel.becomesKeyOnlyIfNeeded = true
-    panel.collectionBehavior = [.managed, .fullScreenAuxiliary]
+    panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary, .ignoresCycle]
     panel.appearance = NSAppearance(named: .darkAqua)
 
     surface.delegate = self
@@ -533,11 +524,12 @@ final class ChromeController: NSObject, DragSurfaceDelegate {
     spacer.setContentHuggingPriority(.init(1), for: .horizontal)
     spacer.setContentCompressionResistancePriority(.init(1), for: .horizontal)
 
+    let drawButton = IconButton(symbol: "pencil.tip.crop.circle", tip: "Çizim & Vurgulama", target: self, action: #selector(onDraw))
     let camera = IconButton(symbol: "camera", tip: "Ekran görüntüsü", target: self, action: #selector(onScreenshot))
     recordButton = IconButton(symbol: "record.circle", tip: "Video kaydet", target: self, action: #selector(onRecord))
     let folder = IconButton(symbol: "folder", tip: "Kayıt klasörü", target: self, action: #selector(onFolder))
 
-    let stack = NSStackView(views: [close, glyph, titleLabel, recordingDot, recordingTime, spacer, camera, recordButton, folder])
+    let stack = NSStackView(views: [close, glyph, titleLabel, recordingDot, recordingTime, spacer, drawButton, camera, recordButton, folder])
     stack.orientation = .horizontal
     stack.alignment = .centerY
     stack.spacing = 6
@@ -652,21 +644,15 @@ final class ChromeController: NSObject, DragSurfaceDelegate {
     }
     if !panel.isVisible {
       panel.orderFront(nil)
-      panel.order(.above, relativeTo: Int(found.windowID))
     }
+    panel.order(.above, relativeTo: Int(found.windowID))
   }
 
   private func updateLevel(for found: Target) {
-    let front = NSWorkspace.shared.frontmostApplication?.processIdentifier
-    let shouldFloat = (front == found.pid) || (front == ownPid)
-    if shouldFloat == floating {
-      return
+    if panel.level != .floating {
+      panel.level = .floating
     }
-    floating = shouldFloat
-    panel.level = shouldFloat ? .floating : .normal
-    if !shouldFloat {
-      panel.order(.above, relativeTo: Int(found.windowID))
-    }
+    panel.order(.above, relativeTo: Int(found.windowID))
   }
 
   // MARK: Drag
@@ -715,7 +701,15 @@ final class ChromeController: NSObject, DragSurfaceDelegate {
     emit(["event": "action", "name": "screenshot"])
   }
 
+  @objc private func onDraw() {
+    emit(["event": "action", "name": "draw"])
+  }
+
   @objc private func onRecord() {
+    if recordingStartedAt != nil {
+      setRecording(false)
+      showMessage("Kaydediliyor…", kind: "info")
+    }
     emit(["event": "action", "name": "record"])
   }
 

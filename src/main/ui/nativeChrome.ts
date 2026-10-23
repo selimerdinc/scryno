@@ -1,7 +1,7 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'child_process'
 import { resolveBinary } from '../paths'
 
-export type ChromeAction = 'screenshot' | 'record' | 'folder' | 'close'
+export type ChromeAction = 'screenshot' | 'record' | 'folder' | 'close' | 'draw'
 
 export interface NativeChromeOptions {
   needle: string
@@ -16,9 +16,15 @@ export interface ChromeStatus {
 }
 
 type ActionHandler = (deviceId: string, action: ChromeAction) => void
+type ReadyHandler = (deviceId: string) => void
 
 const chromes = new Map<string, ChildProcessWithoutNullStreams>()
 let actionHandler: ActionHandler | null = null
+let readyHandler: ReadyHandler | null = null
+
+export function setChromeReadyHandler(handler: ReadyHandler): void {
+  readyHandler = handler
+}
 
 function helperPath(): string | null {
   if (process.platform !== 'darwin') {
@@ -56,7 +62,9 @@ export function openNativeChrome(deviceId: string, options: NativeChromeOptions)
     for (const line of lines) {
       try {
         const event = JSON.parse(line) as { event?: string; name?: ChromeAction }
-        if ((event.event === 'action') && event.name) {
+        if (event.event === 'ready') {
+          readyHandler?.(deviceId)
+        } else if ((event.event === 'action') && event.name) {
           actionHandler?.(deviceId, event.name)
         }
       } catch {

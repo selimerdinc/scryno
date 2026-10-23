@@ -150,7 +150,8 @@ function buildServerArgs(
     `max_size=${options.maxSize ?? 1280}`,
     `video_bit_rate=${options.bitRate ?? 8_000_000}`,
     `max_fps=${options.maxFps ?? 60}`,
-    `clipboard_autosync=${options.clipboard !== false}`
+    `clipboard_autosync=${options.clipboard !== false}`,
+    'i_frame_interval=1'
   ]
 
   if (audio) {

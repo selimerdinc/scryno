@@ -1,0 +1,196 @@
+/* Annotation Overlay Canvas */
+.annotation-canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  z-index: 10;
+}
+
+.annotation-canvas.interactive {
+  pointer-events: auto;
+  cursor: crosshair;
+}
+
+/* Floating Annotation Toolbar */
+.annotation-toolbar {
+  position: absolute;
+  bottom: 18px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  background: rgba(14, 18, 28, 0.88);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 999px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5), 0 0 1px rgba(255, 255, 255, 0.2);
+  z-index: 50;
+  -webkit-app-region: no-drag;
+  animation: barSlideUp 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+  max-width: calc(100% - 24px);
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.annotation-toolbar::-webkit-scrollbar {
+  display: none;
+}
+
+@keyframes barSlideUp {
+  from {
+    opacity: 0;
+    transform: translate(-50%, 14px);
+  }
+  to {
+    opacity: 1;
+    transform: translate(-50%, 0);
+  }
+}
+
+.annotation-group {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+}
+
+.annotation-sep {
+  width: 1px;
+  height: 20px;
+  background: rgba(255, 255, 255, 0.12);
+  margin: 0 3px;
+  flex-shrink: 0;
+}
+
+.ann-btn {
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: rgba(230, 238, 250, 0.78);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  flex-shrink: 0;
+}
+
+.ann-btn svg {
+  width: 16px;
+  height: 16px;
+}
+
+.ann-btn:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.12);
+  color: #fff;
+}
+
+.ann-btn:disabled {
+  opacity: 0.3;
+  cursor: not-allowed;
+}
+
+.ann-btn.active {
+  background: rgba(59, 130, 246, 0.25);
+  color: #60a5fa;
+  border-color: rgba(96, 165, 250, 0.45);
+  box-shadow: 0 0 10px rgba(59, 130, 246, 0.35);
+}
+
+.ann-btn.active.is-touch {
+  background: rgba(16, 185, 129, 0.28);
+  color: #34d399;
+  border-color: rgba(52, 211, 153, 0.5);
+  box-shadow: 0 0 12px rgba(16, 185, 129, 0.4);
+}
+
+.ann-btn.laser-active {
+  background: rgba(245, 158, 11, 0.2);
+  color: #fbbf24;
+  border-color: rgba(251, 191, 36, 0.45);
+  box-shadow: 0 0 10px rgba(245, 158, 11, 0.3);
+}
+
+/* Color Buttons */
+.ann-color-btn {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  border: 2px solid transparent;
+  cursor: pointer;
+  padding: 0;
+  transition: transform 0.15s ease, border-color 0.15s ease;
+  flex-shrink: 0;
+}
+
+.ann-color-btn:hover {
+  transform: scale(1.15);
+}
+
+.ann-color-btn.selected {
+  transform: scale(1.22);
+  border-color: #fff;
+  box-shadow: 0 0 8px currentColor;
+}
+
+/* Width Buttons */
+.ann-width-btn {
+  width: 26px;
+  height: 26px;
+  border-radius: 6px;
+  border: 1px solid transparent;
+  background: transparent;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  padding: 0;
+}
+
+.ann-width-btn:hover {
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.ann-width-btn.selected {
+  background: rgba(255, 255, 255, 0.18);
+  border-color: rgba(255, 255, 255, 0.3);
+}
+
+.ann-dot {
+  background: #fff;
+  border-radius: 50%;
+  display: block;
+}
+
+.ann-close-btn {
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  border: none;
+  background: rgba(255, 255, 255, 0.08);
+  color: rgba(255, 255, 255, 0.6);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  padding: 0;
+  margin-left: 2px;
+  transition: all 0.15s ease;
+}
+
+.ann-close-btn:hover {
+  background: rgba(239, 68, 68, 0.25);
+  color: #ef4444;
+}
+
+.ann-close-btn svg {
+  width: 13px;
+  height: 13px;
+}

@@ -95,6 +95,20 @@ function IconGear(): JSX.Element {
   )
 }
 
+function IconPencil(): JSX.Element {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <path
+        d="m16.5 3.5 4 4L7 21H3v-4L16.5 3.5Z"
+        stroke="currentColor"
+        strokeWidth="1.6"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  )
+}
+
 function ToolbarApp(): JSX.Element {
   const { deviceId, label, platform } = useMemo(() => readParams(), [])
   const [recording, setRecording] = useState(false)
@@ -184,6 +198,16 @@ function ToolbarApp(): JSX.Element {
           onClick={() => void toggleRecord()}
         >
           <IconVideo live={recording} />
+        </button>
+        <button
+          type="button"
+          className="chrome-btn"
+          disabled={busy || !deviceId}
+          title="Çizim yap / Vurgula"
+          aria-label="Çizim yap"
+          onClick={() => void window.scryno.toggleOverlay(deviceId)}
+        >
+          <IconPencil />
         </button>
         <button type="button" className="chrome-btn" disabled title="Ses (yakında)" aria-label="Ses">
           <IconAudio />

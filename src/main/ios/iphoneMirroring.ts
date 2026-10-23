@@ -126,10 +126,15 @@ export async function stopIphoneMirroringRecording(deviceId: string): Promise<{ 
     throw Object.assign(new Error('Aktif kayıt yok'), { code: 'RECORDING_NOT_FOUND' })
   }
   recordings.delete(deviceId)
+  try {
+    active.process.stdin.end()
+  } catch {
+    // Ignore
+  }
   if (active.process.exitCode === null) {
     active.process.kill('SIGINT')
   }
-  const timeout = new Promise<void>((resolve) => setTimeout(resolve, 10000))
+  const timeout = new Promise<void>((resolve) => setTimeout(resolve, 6000))
   await Promise.race([active.exited, timeout])
   if (active.process.exitCode === null) {
     active.process.kill('SIGTERM')

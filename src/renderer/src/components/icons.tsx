@@ -149,3 +149,38 @@ export function IconChevron(props: IconProps): JSX.Element {
     </Svg>
   )
 }
+
+export function IconChevronDown(props: IconProps): JSX.Element {
+  return (
+    <Svg {...props}>
+      <path d="m6 9 6 6 6-6" />
+    </Svg>
+  )
+}
+
+export function IconDeviceScreen(props: IconProps): JSX.Element {
+  return (
+    <Svg {...props}>
+      <rect x="5" y="2" width="14" height="20" rx="3" />
+      <path d="M11 18h2" />
+    </Svg>
+  )
+}
+
+export function IconSearch(props: IconProps): JSX.Element {
+  return (
+    <Svg {...props}>
+      <circle cx="11" cy="11" r="7" />
+      <path d="m20 20-3.5-3.5" />
+    </Svg>
+  )
+}
+
+export function IconCheck(props: IconProps): JSX.Element {
+  return (
+    <Svg {...props}>
+      <path d="m5 13 4 4L19 7" strokeWidth="2.2" />
+    </Svg>
+  )
+}
+

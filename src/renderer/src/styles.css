@@ -997,95 +997,299 @@ p {
 
 .app-picker {
   position: relative;
-}
-
-.app-picker-control {
-  position: relative;
   width: 100%;
 }
 
-.app-picker-control input {
-  padding-right: 36px;
+.app-picker-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 6px;
 }
 
-.app-picker-control input::-webkit-search-cancel-button {
-  display: none;
-}
-
-.app-picker-clear {
-  position: absolute;
-  top: 50%;
-  right: 7px;
-  width: 24px;
-  height: 24px;
-  padding: 0;
-  transform: translateY(-50%);
+.app-picker-reset-btn {
+  background: none;
   border: 0;
-  border-radius: 6px;
-  background: transparent;
-  color: var(--text-faint);
-  font-size: 18px;
-  line-height: 1;
+  padding: 2px 6px;
+  font-size: 0.72rem;
+  color: var(--accent);
   cursor: pointer;
+  border-radius: 4px;
+  transition: all 0.12s;
 }
 
-.app-picker-clear:hover {
-  background: var(--surface-strong);
-  color: var(--text);
+.app-picker-reset-btn:hover {
+  background: rgba(56, 189, 248, 0.12);
 }
 
-.app-picker-options {
-  position: absolute;
-  z-index: 20;
-  top: calc(100% + 4px);
-  left: 0;
-  right: 0;
-  max-height: 260px;
-  overflow-y: auto;
-  padding: 5px;
+.app-picker-trigger {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  width: 100%;
+  min-height: 48px;
+  padding: 8px 12px;
+  background: rgba(255, 255, 255, 0.03);
   border: 1px solid var(--line-strong);
   border-radius: 10px;
-  background: #11151d;
-  box-shadow: 0 16px 36px rgba(0, 0, 0, 0.45);
+  cursor: pointer;
+  text-align: left;
+  transition: all 0.18s cubic-bezier(0.16, 1, 0.3, 1);
+  backdrop-filter: blur(8px);
 }
 
-.app-picker-options button {
+.app-picker-trigger:hover:not(:disabled) {
+  border-color: rgba(255, 255, 255, 0.22);
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.app-picker-trigger.is-open {
+  border-color: var(--accent);
+  background: rgba(255, 255, 255, 0.06);
+  box-shadow: 0 0 0 2px rgba(56, 189, 248, 0.2);
+}
+
+.app-picker-trigger.has-value {
+  border-color: rgba(56, 189, 248, 0.35);
+  background: rgba(56, 189, 248, 0.04);
+}
+
+.app-picker-trigger:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.app-picker-trigger-left {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  flex: 1;
+}
+
+.app-picker-badge {
+  width: 30px;
+  height: 30px;
+  border-radius: 8px;
+  display: grid;
+  place-items: center;
+  font-size: 0.82rem;
+  font-weight: 700;
+  flex-shrink: 0;
+  transition: transform 0.15s ease;
+}
+
+.app-picker-badge.is-default {
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--text-faint);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.app-picker-badge.is-app {
+  background: linear-gradient(135deg, #0284c7 0%, #38bdf8 100%);
+  color: #ffffff;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
+  box-shadow: 0 2px 8px rgba(56, 189, 248, 0.3);
+}
+
+.app-picker-text-group {
   display: flex;
   flex-direction: column;
   gap: 2px;
-  width: 100%;
-  padding: 8px 9px;
-  border: 0;
-  border-radius: 7px;
-  background: transparent;
+  min-width: 0;
+  flex: 1;
+}
+
+.app-picker-main-text {
+  font-size: 0.84rem;
+  font-weight: 600;
   color: var(--text);
-  text-align: left;
-  cursor: pointer;
-}
-
-.app-picker-options button:hover,
-.app-picker-options button.is-selected {
-  background: var(--surface-strong);
-}
-
-.app-picker-options button.is-selected {
-  color: var(--accent);
-}
-
-.app-picker-options small {
-  max-width: 100%;
   overflow: hidden;
-  color: var(--text-faint);
-  font-size: 0.68rem;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.app-picker-empty {
-  padding: 14px 9px;
+.app-picker-sub-text {
+  font-size: 0.70rem;
   color: var(--text-faint);
-  font-size: 0.76rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.app-picker-trigger-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+  color: var(--text-faint);
+}
+
+.app-picker-inline-clear {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--text-faint);
+  font-size: 15px;
+  line-height: 1;
+  cursor: pointer;
+  transition: all 0.14s ease;
+}
+
+.app-picker-inline-clear:hover {
+  background: rgba(239, 68, 68, 0.22);
+  color: #f87171;
+  transform: scale(1.08);
+}
+
+.app-picker-chevron {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: transform 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.app-picker-chevron.is-flipped {
+  transform: rotate(180deg);
+}
+
+.app-picker-popover {
+  position: absolute;
+  z-index: 50;
+  top: calc(100% + 6px);
+  left: 0;
+  right: 0;
+  background: #121620;
+  border: 1px solid var(--line-strong);
+  border-radius: 12px;
+  box-shadow: 0 20px 48px rgba(0, 0, 0, 0.65), 0 0 0 1px rgba(255, 255, 255, 0.06);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  animation: appPickerFadeIn 0.16s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@keyframes appPickerFadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(-4px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.app-picker-search-wrap {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  background: rgba(0, 0, 0, 0.28);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.07);
+}
+
+.app-picker-search-icon {
+  color: var(--text-faint);
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+}
+
+.app-picker-search-input {
+  flex: 1;
+  background: transparent !important;
+  border: 0 !important;
+  outline: none !important;
+  box-shadow: none !important;
+  font-size: 0.82rem;
+  color: var(--text) !important;
+  padding: 0 !important;
+}
+
+.app-picker-search-clear {
+  background: none;
+  border: 0;
+  color: var(--text-faint);
+  font-size: 16px;
+  cursor: pointer;
+  padding: 0 4px;
+}
+
+.app-picker-search-clear:hover {
+  color: var(--text);
+}
+
+.app-picker-list {
+  max-height: 250px;
+  overflow-y: auto;
+  padding: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.app-picker-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  width: 100%;
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+  transition: background 0.12s ease;
+}
+
+.app-picker-row:hover {
+  background: var(--surface-strong);
+}
+
+.app-picker-row.is-selected {
+  background: rgba(56, 189, 248, 0.12);
+  color: var(--accent);
+}
+
+.app-picker-row-left {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  flex: 1;
+}
+
+.app-picker-check {
+  color: var(--accent);
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+}
+
+.app-picker-section-divider {
+  display: flex;
+  align-items: center;
+  padding: 10px 10px 4px 10px;
+  font-size: 0.65rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+}
+
+.app-picker-empty {
+  padding: 20px 12px;
   text-align: center;
+  color: var(--text-faint);
+  font-size: 0.78rem;
 }
 
 .device-card.is-dropping {

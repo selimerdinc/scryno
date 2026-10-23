@@ -24,15 +24,30 @@ const MIRROR_OPTIONS_KEY = 'scryno.android.mirror-options'
 const IOS_OPTIONS_KEY = 'scryno.ios.mirror-options'
 
 const DEFAULT_IOS_OPTIONS: IosOptions = {
-  enlargeOnStart: false,
+  enlargeOnStart: true,
   recordOnStart: false,
-  restoreOnClose: false
+  restoreOnClose: true
 }
 
 function loadIosOptions(): IosOptions {
   try {
-    const stored = JSON.parse(localStorage.getItem(IOS_OPTIONS_KEY) ?? '{}') as Partial<IosOptions>
-    return { ...DEFAULT_IOS_OPTIONS, ...stored }
+    const raw = localStorage.getItem(IOS_OPTIONS_KEY)
+    if (!raw) {
+      return DEFAULT_IOS_OPTIONS
+    }
+    const stored = JSON.parse(raw) as Partial<IosOptions>
+    return {
+      enlargeOnStart:
+        typeof stored.enlargeOnStart === 'boolean'
+          ? stored.enlargeOnStart
+          : DEFAULT_IOS_OPTIONS.enlargeOnStart,
+      // Otomatik kayıt default olarak her zaman kapalı başlar
+      recordOnStart: false,
+      restoreOnClose:
+        typeof stored.restoreOnClose === 'boolean'
+          ? stored.restoreOnClose
+          : DEFAULT_IOS_OPTIONS.restoreOnClose
+    }
   } catch {
     return DEFAULT_IOS_OPTIONS
   }
@@ -66,7 +81,12 @@ function loadMirrorOptions(): MirrorOptions {
     ]) {
       delete stored[removed]
     }
-    return { ...DEFAULT_MIRROR_OPTIONS, ...stored }
+    return {
+      ...DEFAULT_MIRROR_OPTIONS,
+      ...stored,
+      // Otomatik kayıt default olarak her zaman kapalı başlar
+      record: false
+    }
   } catch {
     return DEFAULT_MIRROR_OPTIONS
   }
@@ -289,6 +309,10 @@ export default function App(): JSX.Element {
       window.removeEventListener('dragover', blockFileNavigation)
       window.removeEventListener('drop', blockFileNavigation)
     }
+  }, [])
+
+  useEffect(() => {
+    window.scryno?.notifyReady?.()
   }, [])
 
   useEffect(() => {

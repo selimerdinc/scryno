@@ -6,7 +6,31 @@ Android görüntüsü Scryno penceresinin içinde açılır. iPhone, macOS iPhon
 
 ## Kurulum
 
-macOS Apple Silicon için hazır paket:
+### Homebrew ile Kurulum (Önerilen)
+
+Terminalden tek komutla kurabilirsiniz:
+
+```bash
+# Depoyu tap olarak ekle
+brew tap selimerdinc/scryno https://github.com/selimerdinc/scryno
+
+# Scryno'yu kur
+brew install --cask scryno
+```
+
+### Homebrew ile Güncelleme
+
+Yeni bir sürüm çıktığında güncellemek için:
+
+```bash
+brew upgrade --cask scryno
+```
+
+---
+
+### Manuel DMG Kurulumu
+
+macOS Apple Silicon için hazır paket oluşturma:
 
 ```bash
 npm run dist:mac

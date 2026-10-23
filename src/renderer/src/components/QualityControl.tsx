@@ -1,11 +1,17 @@
-import { useEffect, useMemo, useState, type JSX } from 'react'
+import { useEffect, useMemo, useRef, useState, type JSX } from 'react'
 import type {
   AndroidAppInfo,
   MirrorOptions,
   MirrorOrientation,
   MirrorSource
 } from '../../../shared/types'
-import { IconSliders } from './icons'
+import {
+  IconCheck,
+  IconChevronDown,
+  IconDeviceScreen,
+  IconSearch,
+  IconSliders
+} from './icons'
 
 interface QualityControlProps {
   options: MirrorOptions
@@ -107,6 +113,8 @@ export function QualityControl(props: QualityControlProps): JSX.Element {
   const [appsError, setAppsError] = useState('')
   const [appQuery, setAppQuery] = useState('')
   const [appPickerOpen, setAppPickerOpen] = useState(false)
+  const appPickerRef = useRef<HTMLDivElement>(null)
+  const searchInputRef = useRef<HTMLInputElement>(null)
   const source = options.source ?? 'display'
   const audioOn = options.audio !== false
   const sourceInfo = SOURCES.find((item) => item.id === source) ?? SOURCES[0]
@@ -130,6 +138,34 @@ export function QualityControl(props: QualityControlProps): JSX.Element {
       preset.bitRate === options.bitRate &&
       preset.maxFps === options.maxFps
   )
+
+  useEffect(() => {
+    if (!appPickerOpen) {
+      return
+    }
+    const handleClickOutside = (e: MouseEvent): void => {
+      if (appPickerRef.current && !appPickerRef.current.contains(e.target as Node)) {
+        setAppPickerOpen(false)
+        setAppQuery('')
+      }
+    }
+    const handleKeyDown = (e: KeyboardEvent): void => {
+      if (e.key === 'Escape') {
+        setAppPickerOpen(false)
+        setAppQuery('')
+      }
+    }
+    document.addEventListener('mousedown', handleClickOutside)
+    document.addEventListener('keydown', handleKeyDown)
+    const timer = window.setTimeout(() => {
+      searchInputRef.current?.focus()
+    }, 40)
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside)
+      document.removeEventListener('keydown', handleKeyDown)
+      window.clearTimeout(timer)
+    }
+  }, [appPickerOpen])
 
   useEffect(() => {
     if (!deviceId || source === 'camera') {
@@ -225,84 +261,187 @@ export function QualityControl(props: QualityControlProps): JSX.Element {
 
       {source !== 'camera' ? (
         <div className="setting-block">
-          <div className="field app-picker">
-            <span className="setting-name">Açılacak uygulama</span>
-            <div className="app-picker-control">
-              <input
-                id="startApp"
-                type="search"
-                role="combobox"
-                autoComplete="off"
-                aria-expanded={appPickerOpen}
-                aria-controls="startAppOptions"
-                placeholder={appsLoading ? 'Uygulamalar okunuyor…' : 'Uygulama ara veya seç'}
-                value={appPickerOpen ? appQuery : (selectedApp?.name ?? options.startApp ?? '')}
-                disabled={busy || appsLoading || !deviceId}
-                onFocus={() => {
-                  setAppQuery('')
-                  setAppPickerOpen(true)
-                }}
-                onBlur={() => window.setTimeout(() => setAppPickerOpen(false), 100)}
-                onChange={(event) => {
-                  setAppQuery(event.target.value)
-                  setAppPickerOpen(true)
-                }}
-              />
+          <div className="field app-picker" ref={appPickerRef}>
+            <div className="app-picker-header">
+              <span className="setting-name">Açılacak uygulama</span>
               {options.startApp ? (
                 <button
                   type="button"
-                  className="app-picker-clear"
-                  aria-label="Seçili uygulamayı kaldır"
-                  title="Uygulama açma"
+                  className="app-picker-reset-btn"
                   disabled={busy}
-                  onMouseDown={(event) => event.preventDefault()}
                   onClick={() => {
-                    setAppQuery('')
                     onChange({ ...options, startApp: '' })
+                    setAppQuery('')
                   }}
+                  title="Varsayılan ekrana dön"
                 >
-                  ×
+                  Sıfırla
                 </button>
               ) : null}
             </div>
+
+            {/* Premium Selector Trigger (Never looks like a blank input) */}
+            <button
+              type="button"
+              className={`app-picker-trigger ${appPickerOpen ? 'is-open' : ''} ${options.startApp ? 'has-value' : ''}`}
+              disabled={busy || appsLoading || !deviceId}
+              onClick={() => setAppPickerOpen((prev) => !prev)}
+              aria-haspopup="listbox"
+              aria-expanded={appPickerOpen}
+            >
+              <div className="app-picker-trigger-left">
+                <div className={`app-picker-badge ${options.startApp ? 'is-app' : 'is-default'}`}>
+                  {options.startApp ? (
+                    (selectedApp?.name || options.startApp).charAt(0).toUpperCase()
+                  ) : (
+                    <IconDeviceScreen size={15} />
+                  )}
+                </div>
+                <div className="app-picker-text-group">
+                  <div className="app-picker-main-text">
+                    {appsLoading
+                      ? 'Uygulamalar okunuyor…'
+                      : options.startApp
+                        ? (selectedApp?.name ?? options.startApp)
+                        : 'Varsayılan Ekran'}
+                  </div>
+                  <div className="app-picker-sub-text">
+                    {options.startApp
+                      ? (selectedApp?.packageName ?? 'Seçili uygulama')
+                      : 'Uygulama açılmaz, mevcut ekran gelir'}
+                  </div>
+                </div>
+              </div>
+
+              <div className="app-picker-trigger-right">
+                {options.startApp ? (
+                  <span
+                    role="button"
+                    tabIndex={0}
+                    className="app-picker-inline-clear"
+                    title="Uygulama seçimini kaldır"
+                    aria-label="Uygulama seçimini kaldır"
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      onChange({ ...options, startApp: '' })
+                      setAppQuery('')
+                    }}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' || e.key === ' ') {
+                        e.stopPropagation()
+                        onChange({ ...options, startApp: '' })
+                        setAppQuery('')
+                      }
+                    }}
+                  >
+                    ×
+                  </span>
+                ) : null}
+                <span className={`app-picker-chevron ${appPickerOpen ? 'is-flipped' : ''}`}>
+                  <IconChevronDown size={14} />
+                </span>
+              </div>
+            </button>
+
+            {/* Popover Dropdown */}
             {appPickerOpen && !appsLoading ? (
-              <div id="startAppOptions" className="app-picker-options" role="listbox">
-                <button
-                  type="button"
-                  role="option"
-                  aria-selected={!options.startApp}
-                  className={!options.startApp ? 'is-selected' : ''}
-                  onMouseDown={(event) => event.preventDefault()}
-                  onClick={() => {
-                    setAppPickerOpen(false)
-                    setAppQuery('')
-                    onChange({ ...options, startApp: '' })
-                  }}
-                >
-                  <span>Uygulama açma</span>
-                  <small>Telefon mevcut ekranda açılır</small>
-                </button>
-                {filteredApps.map((app) => (
+              <div className="app-picker-popover" role="listbox">
+                <div className="app-picker-search-wrap">
+                  <span className="app-picker-search-icon">
+                    <IconSearch size={14} />
+                  </span>
+                  <input
+                    ref={searchInputRef}
+                    type="text"
+                    className="app-picker-search-input"
+                    placeholder="Uygulama ara (örn: WhatsApp, Kamera)..."
+                    value={appQuery}
+                    onChange={(e) => setAppQuery(e.target.value)}
+                  />
+                  {appQuery ? (
+                    <button
+                      type="button"
+                      className="app-picker-search-clear"
+                      onClick={() => setAppQuery('')}
+                      aria-label="Aramayı temizle"
+                    >
+                      ×
+                    </button>
+                  ) : null}
+                </div>
+
+                <div className="app-picker-list">
+                  {/* Default / No App Option */}
                   <button
-                    key={app.packageName}
                     type="button"
                     role="option"
-                    aria-selected={options.startApp === app.packageName}
-                    className={options.startApp === app.packageName ? 'is-selected' : ''}
-                    onMouseDown={(event) => event.preventDefault()}
+                    aria-selected={!options.startApp}
+                    className={`app-picker-row ${!options.startApp ? 'is-selected' : ''}`}
                     onClick={() => {
                       setAppPickerOpen(false)
                       setAppQuery('')
-                      onChange({ ...options, startApp: app.packageName })
+                      onChange({ ...options, startApp: '' })
                     }}
                   >
-                    <span>{app.name}</span>
-                    <small>{app.packageName}</small>
+                    <div className="app-picker-row-left">
+                      <div className="app-picker-badge is-default">
+                        <IconDeviceScreen size={15} />
+                      </div>
+                      <div className="app-picker-text-group">
+                        <div className="app-picker-main-text">Varsayılan Ekran</div>
+                        <div className="app-picker-sub-text">Uygulama açılmaz, mevcut ekran veya ana ekran gelir</div>
+                      </div>
+                    </div>
+                    {!options.startApp ? (
+                      <span className="app-picker-check">
+                        <IconCheck size={14} />
+                      </span>
+                    ) : null}
                   </button>
-                ))}
-                {filteredApps.length === 0 ? (
-                  <div className="app-picker-empty">Eşleşen uygulama bulunamadı.</div>
-                ) : null}
+
+                  <div className="app-picker-section-divider">
+                    <span>Yüklü Uygulamalar ({filteredApps.length})</span>
+                  </div>
+
+                  {filteredApps.map((app) => {
+                    const isSelected = options.startApp === app.packageName
+                    return (
+                      <button
+                        key={app.packageName}
+                        type="button"
+                        role="option"
+                        aria-selected={isSelected}
+                        className={`app-picker-row ${isSelected ? 'is-selected' : ''}`}
+                        onClick={() => {
+                          setAppPickerOpen(false)
+                          setAppQuery('')
+                          onChange({ ...options, startApp: app.packageName })
+                        }}
+                      >
+                        <div className="app-picker-row-left">
+                          <div className="app-picker-badge is-app">
+                            {app.name.charAt(0).toUpperCase()}
+                          </div>
+                          <div className="app-picker-text-group">
+                            <div className="app-picker-main-text">{app.name}</div>
+                            <div className="app-picker-sub-text">{app.packageName}</div>
+                          </div>
+                        </div>
+                        {isSelected ? (
+                          <span className="app-picker-check">
+                            <IconCheck size={14} />
+                          </span>
+                        ) : null}
+                      </button>
+                    )
+                  })}
+
+                  {filteredApps.length === 0 ? (
+                    <div className="app-picker-empty">
+                      <span>"{appQuery}" ile eşleşen uygulama bulunamadı</span>
+                    </div>
+                  ) : null}
+                </div>
               </div>
             ) : null}
           </div>

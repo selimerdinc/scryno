@@ -40,9 +40,10 @@ import {
   startIphoneMirroringRecording,
   stopIphoneMirroringRecording
 } from './ios/iphoneMirroring'
+import { writeFile } from 'fs/promises'
 import { requestIosPair } from './ios/readiness'
 import { probeUsbmux } from './ios/usbmux'
-import { getCaptureDir } from './media/capturePaths'
+import { getCaptureDir, makeCapturePath } from './media/capturePaths'
 import {
   isRecording,
   startAdbRecording,
@@ -59,7 +60,16 @@ import {
   setToolbarOrientation,
   type ToolbarOrientation
 } from './ui/mirrorToolbar'
-import { setChromeActionHandler, type ChromeAction } from './ui/nativeChrome'
+import {
+  setChromeActionHandler,
+  setChromeReadyHandler,
+  type ChromeAction
+} from './ui/nativeChrome'
+import {
+  toggleMirrorOverlay,
+  closeMirrorOverlay,
+  closeAllMirrorOverlays
+} from './ui/mirrorOverlay'
 import { alignMirrorWindows } from './ui/mirrorLayout'
 import type { ApiError, DeviceInfo, MirrorOptions } from '../shared/types'
 
@@ -114,8 +124,29 @@ function createWindow(): void {
 
   const win = mainWindow
 
-  win.on('ready-to-show', () => {
+  win.once('ready-to-show', () => {
     win.show()
+  })
+
+  // Prevent window staying hidden if ready-to-show is delayed by macOS WindowServer
+  const showFallback = setTimeout(() => {
+    if (win && !win.isDestroyed() && !win.isVisible()) {
+      win.show()
+    }
+  }, 2500)
+
+  win.webContents.on('did-finish-load', () => {
+    clearTimeout(showFallback)
+  })
+
+  win.webContents.on('did-fail-load', () => {
+    if (isDev && process.env['ELECTRON_RENDERER_URL']) {
+      setTimeout(() => {
+        if (win && !win.isDestroyed()) {
+          void win.loadURL(process.env['ELECTRON_RENDERER_URL'])
+        }
+      }, 400)
+    }
   })
 
   // Closing the hub closes the Android window and iPhone Mirroring with it.
@@ -126,6 +157,7 @@ function createWindow(): void {
   })
 
   win.on('closed', () => {
+    clearTimeout(showFallback)
     if (mainWindow === win) {
       mainWindow = null
     }
@@ -153,6 +185,7 @@ function isRecordingFor(deviceId: string): boolean {
 }
 
 async function stopMirrorFor(deviceId: string): Promise<void> {
+  closeMirrorOverlay(deviceId)
   if (isIosMirroring(deviceId)) {
     stopIosMirror(deviceId)
     return
@@ -240,6 +273,8 @@ async function stopRecordingFor(deviceId: string): Promise<{ path: string }> {
   }
 }
 
+const recordingBusy = new Set<string>()
+
 function handleChromeAction(deviceId: string, action: ChromeAction): void {
   const platform: DeviceInfo['platform'] = isIosMirroring(deviceId) ? 'ios' : 'android'
   const run = async (): Promise<void> => {
@@ -248,15 +283,34 @@ function handleChromeAction(deviceId: string, action: ChromeAction): void {
         await screenshotFor(deviceId, platform)
         break
       case 'record':
-        if (isRecordingFor(deviceId)) {
-          const result = await stopRecordingFor(deviceId)
-          shell.showItemInFolder(result.path)
-        } else {
-          startRecordingFor(deviceId)
+        if (recordingBusy.has(deviceId)) {
+          break
+        }
+        recordingBusy.add(deviceId)
+        try {
+          if (isRecordingFor(deviceId)) {
+            broadcastToolbarStatus(deviceId, {
+              recording: false,
+              message: 'Kayıt durduruluyor…',
+              kind: 'info'
+            })
+            const result = await stopRecordingFor(deviceId)
+            shell.showItemInFolder(result.path)
+          } else {
+            startRecordingFor(deviceId)
+          }
+        } finally {
+          setTimeout(() => recordingBusy.delete(deviceId), 1200)
         }
         break
       case 'folder':
         await shell.openPath(getCaptureDir())
+        break
+      case 'draw':
+        await toggleMirrorOverlay(
+          deviceId,
+          isIphoneMirroringSession(deviceId) ? '@iphone-mirroring' : deviceId
+        )
         break
       case 'close':
         await stopMirrorFor(deviceId)
@@ -566,6 +620,62 @@ function registerIpc(): void {
     }
   })
 
+  ipcMain.handle(
+    'media:save-screenshot-data',
+    async (_event, data: Uint8Array, deviceId?: string) => {
+      try {
+        const outPath = makeCapturePath('screenshot', 'png')
+        await writeFile(outPath, Buffer.from(data))
+        const copiedToClipboard = copyImageFileToClipboard(outPath)
+        if (deviceId) {
+          broadcastToolbarStatus(deviceId, {
+            recording: isRecordingFor(deviceId),
+            message: copiedToClipboard
+              ? 'Kaydedildi · panoya kopyalandı'
+              : 'Ekran görüntüsü kaydedildi',
+            kind: 'ok'
+          })
+        }
+        return {
+          ok: true as const,
+          path: outPath,
+          message: copiedToClipboard
+            ? `Screenshot kaydedildi ve panoya kopyalandı: ${outPath}`
+            : `Screenshot kaydedildi: ${outPath}`,
+          copiedToClipboard
+        }
+      } catch (error) {
+        return toApiError(error, 'SCREENSHOT_SAVE_FAILED')
+      }
+    }
+  )
+
+  ipcMain.handle(
+    'media:save-recording-data',
+    async (_event, data: Uint8Array, extension: string, deviceId?: string) => {
+      try {
+        const ext = extension === 'mp4' ? 'mp4' : 'webm'
+        const outPath = makeCapturePath('recording', ext)
+        await writeFile(outPath, Buffer.from(data))
+        if (deviceId) {
+          broadcastToolbarStatus(deviceId, {
+            recording: isRecordingFor(deviceId),
+            message: 'Video kaydedildi',
+            kind: 'ok'
+          })
+        }
+        return {
+          ok: true as const,
+          path: outPath,
+          message: `Video kaydedildi: ${outPath}`,
+          stopped: true
+        }
+      } catch (error) {
+        return toApiError(error, 'RECORD_SAVE_FAILED')
+      }
+    }
+  )
+
   ipcMain.handle('media:open-capture-dir', async () => {
     try {
       const dir = getCaptureDir()
@@ -604,6 +714,27 @@ function registerIpc(): void {
       return setToolbarOrientation(deviceId, orientation)
     }
   )
+
+  ipcMain.handle('mirror:toggle-overlay', async (_event, deviceId: string) => {
+    return toggleMirrorOverlay(
+      deviceId,
+      isIphoneMirroringSession(deviceId) ? '@iphone-mirroring' : deviceId
+    )
+  })
+
+  ipcMain.on('overlay:ignore-mouse-events', (event, ignore: boolean, forward?: boolean) => {
+    const win = BrowserWindow.fromWebContents(event.sender)
+    if (win && !win.isDestroyed()) {
+      win.setIgnoreMouseEvents(ignore, { forward: Boolean(forward) })
+    }
+  })
+
+  ipcMain.on('app:ready', (event) => {
+    const win = BrowserWindow.fromWebContents(event.sender)
+    if (win && !win.isDestroyed() && !win.isVisible()) {
+      win.show()
+    }
+  })
 }
 
 const hasSingleInstanceLock = app.requestSingleInstanceLock()
@@ -648,6 +779,9 @@ app.whenReady().then(() => {
   })
 
   setChromeActionHandler(handleChromeAction)
+  setChromeReadyHandler((deviceId) => {
+    broadcastToolbarStatus(deviceId, { recording: isRecordingFor(deviceId) })
+  })
   registerIpc()
   createWindow()
 
@@ -663,6 +797,7 @@ app.whenReady().then(() => {
 })
 
 function closeCompanionMirrors(): Promise<void> {
+  closeAllMirrorOverlays()
   stopAllAdbRecordings()
   closeAllMirrorToolbars()
   stopAllSessions()
