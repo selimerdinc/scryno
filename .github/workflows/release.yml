@@ -82,19 +82,23 @@ jobs:
           FILE: ${{ steps.dmg.outputs.file }}
         shell: bash
         run: |
+          cat << EOF > release_notes.md
+          ## Scryno v${VERSION}
+
+          ### Homebrew ile Kurulum:
+          \`\`\`bash
+          brew tap selimerdinc/scryno https://github.com/selimerdinc/scryno
+          brew install --cask scryno
+          \`\`\`
+
+          ### Güncelleme:
+          \`\`\`bash
+          brew upgrade --cask scryno
+          \`\`\`
+          EOF
+
           gh release create "$TAG" "$FILE" Casks/scryno.rb \
             --title "Scryno $VERSION" \
             --target "$GITHUB_SHA" \
             --latest \
-            --notes "## Scryno v$VERSION
-
-### Homebrew ile Kurulum:
-\`\`\`bash
-brew tap selimerdinc/scryno https://github.com/selimerdinc/scryno
-brew install --cask scryno
-\`\`\`
-
-### Güncelleme:
-\`\`\`bash
-brew upgrade --cask scryno
-\`\`\`"
+            --notes-file release_notes.md
