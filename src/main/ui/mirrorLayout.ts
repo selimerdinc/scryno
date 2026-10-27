@@ -1,16 +1,51 @@
 import { screen } from 'electron'
 import { getMirrorWindow, listSessions } from '../android/scrcpySession'
-import { IPHONE_MIRRORING_NEEDLE } from '../ios/iphoneMirroring'
+import { activateIphoneMirroring, IPHONE_MIRRORING_NEEDLE } from '../ios/iphoneMirroring'
 import { listIosMirrorSessions } from '../ios/mirror'
 import {
   enlargeIphoneMirroringWindow,
   findMirrorWindowBounds,
+  isOtherAppFullscreen,
   moveMirrorWindow,
   type MirrorWindowBounds
 } from './mirrorWindowBounds'
 
 const BAR_HEIGHT = 40
 const GAP = 28
+
+let lastSyncTime = 0
+
+/**
+ * Brings all active mirrored devices (Android and iPhone) to the front together.
+ * If sourceDeviceId is specified, ensures that device gets key focus.
+ */
+export async function bringAllMirrorsToFront(sourceDeviceId?: string): Promise<void> {
+  const now = Date.now()
+  if (now - lastSyncTime < 400) {
+    return
+  }
+  lastSyncTime = now
+
+  if (await isOtherAppFullscreen()) {
+    return
+  }
+
+  // 1. Activate iPhone Mirroring if iOS mirror is active
+  if (listIosMirrorSessions().length > 0) {
+    await activateIphoneMirroring()
+  }
+
+  // 2. Raise all Android windows
+  for (const session of listSessions()) {
+    const win = getMirrorWindow(session.deviceId)
+    if (win && !win.isDestroyed()) {
+      win.moveTop()
+      if (session.deviceId === sourceDeviceId) {
+        win.focus()
+      }
+    }
+  }
+}
 
 interface PlacedWindow {
   needle: string
@@ -27,7 +62,7 @@ function delay(ms: number): Promise<void> {
  * Grows iPhone Mirroring to the largest size macOS allows, matches every Android
  * mirror to that height, then places the windows side by side with a shared top edge.
  */
-export async function alignMirrorWindows(attempt = 0): Promise<void> {
+export async function alignMirrorWindows(attempt = 0, targetDisplay?: Electron.Display): Promise<void> {
   const expected = listSessions().length + listIosMirrorSessions().length
   if (expected === 0) {
     return
@@ -61,7 +96,7 @@ export async function alignMirrorWindows(attempt = 0): Promise<void> {
 
   if (windows.length < expected && attempt < 5) {
     await delay(400)
-    await alignMirrorWindows(attempt + 1)
+    await alignMirrorWindows(attempt + 1, targetDisplay)
     return
   }
   if (windows.length === 0 || (!ios && windows.length < 2)) {
@@ -70,12 +105,29 @@ export async function alignMirrorWindows(attempt = 0): Promise<void> {
 
   windows.sort((left, right) => left.frame.x - right.frame.x)
   const anchor = windows[0].frame
-  const display = screen.getDisplayMatching({
-    x: Math.round(anchor.x),
-    y: Math.round(anchor.y),
-    width: Math.round(Math.max(1, anchor.width)),
-    height: Math.round(Math.max(1, anchor.height))
-  })
+
+  let display = targetDisplay
+  if (!display) {
+    const allDisplays = screen.getAllDisplays()
+    const isAnchorVisible = allDisplays.some(
+      (d) =>
+        anchor.x + anchor.width > d.bounds.x &&
+        anchor.x < d.bounds.x + d.bounds.width &&
+        anchor.y + anchor.height > d.bounds.y &&
+        anchor.y < d.bounds.y + d.bounds.height
+    )
+    if (isAnchorVisible) {
+      display = screen.getDisplayMatching({
+        x: Math.round(anchor.x),
+        y: Math.round(anchor.y),
+        width: Math.round(Math.max(1, anchor.width)),
+        height: Math.round(Math.max(1, anchor.height))
+      })
+    } else {
+      display = screen.getDisplayNearestPoint(screen.getCursorScreenPoint())
+    }
+  }
+
   const area = display.workArea
   const tallest = Math.max(...windows.map((item) => item.frame.height))
   let y = area.y + BAR_HEIGHT + 8

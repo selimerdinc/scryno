@@ -17,13 +17,19 @@ export interface ChromeStatus {
 
 type ActionHandler = (deviceId: string, action: ChromeAction) => void
 type ReadyHandler = (deviceId: string) => void
+type ActivateHandler = (deviceId: string) => void
 
 const chromes = new Map<string, ChildProcessWithoutNullStreams>()
 let actionHandler: ActionHandler | null = null
 let readyHandler: ReadyHandler | null = null
+let activateHandler: ActivateHandler | null = null
 
 export function setChromeReadyHandler(handler: ReadyHandler): void {
   readyHandler = handler
+}
+
+export function setChromeActivateHandler(handler: ActivateHandler): void {
+  activateHandler = handler
 }
 
 function helperPath(): string | null {
@@ -64,7 +70,10 @@ export function openNativeChrome(deviceId: string, options: NativeChromeOptions)
         const event = JSON.parse(line) as { event?: string; name?: ChromeAction }
         if (event.event === 'ready') {
           readyHandler?.(deviceId)
+        } else if (event.event === 'activate' || event.event === 'focused') {
+          activateHandler?.(deviceId)
         } else if ((event.event === 'action') && event.name) {
+          activateHandler?.(deviceId)
           actionHandler?.(deviceId, event.name)
         }
       } catch {

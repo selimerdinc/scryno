@@ -33,6 +33,8 @@ export interface AndroidMirrorApi {
   onVideo: (listener: (packet: MirrorPacket) => void) => () => void
   onAudio: (listener: (packet: MirrorPacket) => void) => () => void
   onRecord: (listener: (action: 'start' | 'stop') => void) => () => void
+  onToggleAnnotations: (listener: () => void) => () => void
+  onSetAnnotations?: (listener: (payload: { open: boolean }) => void) => () => void
   ready: () => void
   sendInput: (input: MirrorInput) => void
   reportSize: (width: number, height: number) => void
@@ -87,6 +89,22 @@ export interface ScrynoApi {
     extension: string,
     deviceId?: string
   ) => Promise<CaptureFileResponse>
+  captureDualSources: (
+    androidId: string,
+    iosId: string,
+    androidName?: string,
+    iosName?: string
+  ) => Promise<import('../shared/types').DualScreenshotRawResponse>
+  saveDualScreenshot: (data: Uint8Array) => Promise<CaptureFileResponse>
+  startDualRecording: (androidId: string, iosId: string) => Promise<CaptureFileResponse>
+  stopDualRecording: (androidId: string, iosId: string) => Promise<CaptureFileResponse>
+  openDualToolbar: (androidId: string, iosId: string) => Promise<{ ok: boolean }>
+  closeDualToolbar: () => Promise<{ ok: boolean }>
+  toggleAndroidAnnotations: (deviceId?: string) => Promise<{ ok: boolean }>
+  setAndroidAnnotations: (deviceId: string | undefined, open: boolean) => Promise<boolean>
+  toggleDualAnnotations: (androidId?: string, iosId?: string) => Promise<{ ok: boolean; open?: boolean }>
+  closeDualAnnotations: (androidId?: string, iosId?: string) => Promise<{ ok: boolean }>
+  alignDualMirrors: () => Promise<{ ok: boolean }>
   toggleOverlay: (deviceId: string) => Promise<{ ok: boolean; open?: boolean }>
   setIgnoreMouseEvents: (ignore: boolean, forward?: boolean) => void
   setToolbarOrientation: (
@@ -102,11 +120,20 @@ const api: ScrynoApi = {
     onVideo: (listener) => subscribe('android-mirror:video', listener),
     onAudio: (listener) => subscribe('android-mirror:audio', listener),
     onRecord: (listener) => subscribe('android-mirror:record', listener),
+    onToggleAnnotations: (listener) => subscribe('android-mirror:toggle-annotations', listener),
+    onSetAnnotations: (listener) => subscribe('android-mirror:set-annotations', listener),
     ready: () => ipcRenderer.send('android-mirror:ready'),
     sendInput: (input) => ipcRenderer.send('android-mirror:input', input),
     reportSize: (width, height) => ipcRenderer.send('android-mirror:size', width, height),
     saveRecording: (data, extension) => ipcRenderer.invoke('android-mirror:recording', data, extension)
   },
+  toggleAndroidAnnotations: (deviceId) => ipcRenderer.invoke('android-mirror:toggle-annotations', deviceId),
+  setAndroidAnnotations: (deviceId, open) => ipcRenderer.invoke('android-mirror:set-annotations', deviceId, open),
+  toggleDualAnnotations: (androidId, iosId) =>
+    ipcRenderer.invoke('dual:toggle-annotations', { androidId, iosId }),
+  closeDualAnnotations: (androidId, iosId) =>
+    ipcRenderer.invoke('dual:close-annotations', { androidId, iosId }),
+  alignDualMirrors: () => ipcRenderer.invoke('dual:align-mirrors'),
   listDevices: () => ipcRenderer.invoke('devices:list'),
   startMirror: (deviceId, options, platform, label) =>
     ipcRenderer.invoke('mirror:start', deviceId, options, platform, label),
@@ -137,6 +164,16 @@ const api: ScrynoApi = {
     ipcRenderer.invoke('media:save-screenshot-data', data, deviceId),
   saveRecordingData: (data, extension, deviceId) =>
     ipcRenderer.invoke('media:save-recording-data', data, extension, deviceId),
+  captureDualSources: (androidId, iosId, androidName, iosName) =>
+    ipcRenderer.invoke('media:capture-dual-sources', androidId, iosId, androidName, iosName),
+  saveDualScreenshot: (data) => ipcRenderer.invoke('media:save-dual-screenshot', data),
+  startDualRecording: (androidId, iosId) =>
+    ipcRenderer.invoke('media:start-dual-recording', androidId, iosId),
+  stopDualRecording: (androidId, iosId) =>
+    ipcRenderer.invoke('media:stop-dual-recording', androidId, iosId),
+  openDualToolbar: (androidId, iosId) =>
+    ipcRenderer.invoke('dual-toolbar:open', androidId, iosId),
+  closeDualToolbar: () => ipcRenderer.invoke('dual-toolbar:close'),
   toggleOverlay: (deviceId) => ipcRenderer.invoke('mirror:toggle-overlay', deviceId),
   setIgnoreMouseEvents: (ignore, forward) =>
     ipcRenderer.send('overlay:ignore-mouse-events', ignore, forward),

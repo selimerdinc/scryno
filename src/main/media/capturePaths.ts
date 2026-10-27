@@ -11,11 +11,22 @@ export function getCaptureDir(): string {
   return dir
 }
 
-export function makeCaptureFilename(kind: 'screenshot' | 'recording', extension: string): string {
+export type CaptureKind = 'screenshot' | 'recording' | 'dual-screenshot' | 'dual-recording'
+
+export function makeCaptureFilename(kind: CaptureKind, extension: string): string {
   const stamp = new Date().toISOString().replace(/[:.]/g, '-').replace('T', '_').slice(0, 19)
   return `scryno-${kind}-${stamp}.${extension}`
 }
 
-export function makeCapturePath(kind: 'screenshot' | 'recording', extension: string): string {
+export function makeCapturePath(kind: CaptureKind, extension: string): string {
   return join(getCaptureDir(), makeCaptureFilename(kind, extension))
+}
+
+export function makeTempCapturePath(kind: string, extension: string): string {
+  const stamp = new Date().toISOString().replace(/[:.]/g, '-').replace('T', '_').slice(0, 19)
+  const dir = join(app?.getPath?.('temp') || '/tmp', 'scryno-dual-temp')
+  if (!existsSync(dir)) {
+    mkdirSync(dir, { recursive: true })
+  }
+  return join(dir, `temp-${kind}-${stamp}.${extension}`)
 }

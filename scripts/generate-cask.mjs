@@ -36,13 +36,10 @@ armSha = armSha || '5f8599801130cbe931253a0aed96ebec5535e679c3d49f1aa47291a27e7f
 intelSha = intelSha || armSha
 
 const caskContent = `cask "scryno" do
-  arch arm: "-arm64", intel: ""
-
   version "${version}"
-  sha256 arm:   "${armSha}",
-         intel: "${intelSha}"
+  sha256 "${armSha}"
 
-  url "https://github.com/selimerdinc/scryno/releases/download/build-#{version.sub(/^1\\.0\\./, '')}/Scryno-#{version}#{arch}.dmg"
+  url "https://github.com/selimerdinc/scryno/releases/download/build-#{version.sub(/^1\\.0\\./, '')}/Scryno-#{version}-arm64.dmg"
   name "Scryno"
   desc "Android and iPhone mirroring & control desktop app"
   homepage "https://github.com/selimerdinc/scryno"
@@ -59,7 +56,8 @@ const caskContent = `cask "scryno" do
   end
 
   auto_updates true
-  depends_on macos: :monterey
+  depends_on macos: ">= :sonoma"
+  depends_on arch: :arm64
 
   app "Scryno.app"
 

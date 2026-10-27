@@ -280,7 +280,7 @@ p {
   overflow: auto;
 }
 
-@media (max-width: 980px) {
+@media (max-width: 760px) {
   .hub {
     grid-template-columns: 1fr;
   }
@@ -419,7 +419,7 @@ p {
 
 .card-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
   gap: 14px;
   align-items: start;
 }
@@ -1825,6 +1825,524 @@ p {
   to {
     opacity: 1;
     transform: translateY(0);
+  }
+}
+
+/* ==========================================================================
+   Dual Studio (Side-by-Side Hub)
+   ========================================================================== */
+
+.dual-studio-card {
+  grid-column: 1 / -1;
+  position: relative;
+  background: linear-gradient(135deg, rgba(23, 27, 44, 0.72) 0%, rgba(13, 16, 26, 0.85) 100%);
+  border: 1px solid rgba(139, 92, 246, 0.28);
+  border-radius: 16px;
+  padding: 18px 22px;
+  margin-bottom: 6px;
+  box-shadow: 0 12px 36px rgba(0, 0, 0, 0.35), 0 0 0 1px rgba(255, 255, 255, 0.04) inset;
+  backdrop-filter: blur(20px);
+  overflow: hidden;
+  transition: all 0.2s ease;
+  animation: rise 0.25s ease-out;
+}
+
+.dual-studio-card:hover {
+  border-color: rgba(139, 92, 246, 0.42);
+  box-shadow: 0 16px 44px rgba(0, 0, 0, 0.45), 0 0 24px rgba(139, 92, 246, 0.12);
+}
+
+.dual-studio-glow {
+  position: absolute;
+  top: -40px;
+  right: -40px;
+  width: 180px;
+  height: 180px;
+  background: radial-gradient(circle, rgba(168, 85, 247, 0.22) 0%, rgba(59, 130, 246, 0.15) 50%, transparent 70%);
+  pointer-events: none;
+  filter: blur(28px);
+}
+
+.dual-studio-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 14px;
+  margin-bottom: 16px;
+}
+
+.dual-studio-brand {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-wrap: wrap;
+}
+
+.dual-studio-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.76rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  background: linear-gradient(135deg, #a78bfa, #38bdf8);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  padding: 3px 8px;
+  border-radius: 6px;
+  background-color: rgba(139, 92, 246, 0.12);
+  border: 1px solid rgba(139, 92, 246, 0.2);
+}
+
+.dual-studio-devices {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.dual-device-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border-radius: 20px;
+  font-size: 0.8rem;
+  font-weight: 500;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  color: var(--text);
+}
+
+.dual-device-pill.android {
+  border-color: rgba(16, 185, 129, 0.25);
+  color: #34d399;
+}
+
+.dual-device-pill.ios {
+  border-color: rgba(59, 130, 246, 0.25);
+  color: #60a5fa;
+}
+
+.dual-device-pill .device-name {
+  max-width: 130px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dual-pair-divider {
+  color: var(--text-faint);
+  font-size: 0.9rem;
+  font-weight: 600;
+}
+
+.dual-mode-selector {
+  display: inline-flex;
+  background: rgba(0, 0, 0, 0.35);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 10px;
+  padding: 3px;
+  gap: 2px;
+}
+
+.mode-btn {
+  background: transparent;
+  border: 0;
+  color: var(--text-muted);
+  font-size: 0.76rem;
+  font-weight: 500;
+  padding: 5px 11px;
+  border-radius: 7px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.mode-btn:hover {
+  color: var(--text);
+}
+
+.mode-btn.active {
+  background: rgba(255, 255, 255, 0.12);
+  color: #ffffff;
+  font-weight: 600;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.25);
+}
+
+.dual-studio-bottom {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.dual-actions-group {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.dual-ss-btn {
+  background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 50%, #d946ef 100%);
+  border: 0;
+  color: #ffffff;
+  font-weight: 600;
+  box-shadow: 0 4px 16px rgba(139, 92, 246, 0.35);
+  transition: all 0.15s ease;
+}
+
+.dual-ss-btn:hover:not(:disabled) {
+  transform: translateY(-1px);
+  box-shadow: 0 6px 22px rgba(139, 92, 246, 0.5);
+}
+
+.dual-rec-btn {
+  font-weight: 600;
+}
+
+.recording-pulse {
+  animation: pulse-red 1.5s infinite;
+}
+
+@keyframes pulse-red {
+  0% {
+    box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.7);
+  }
+  70% {
+    box-shadow: 0 0 0 8px rgba(239, 68, 68, 0);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(239, 68, 68, 0);
+  }
+}
+
+.dual-hint-text {
+  font-size: 0.74rem;
+  color: var(--text-faint);
+}
+
+/* ==========================================================================
+   Responsive Adaptations
+   ========================================================================== */
+
+/* 1. Laptops & Compact Widths (<= 1060px) */
+@media (max-width: 1060px) {
+  .titlebar {
+    height: 58px;
+    padding: 0 16px 0 84px;
+    gap: 10px;
+  }
+
+  .brand h1 {
+    font-size: 15px;
+  }
+
+  .brand p {
+    font-size: 11px;
+  }
+
+  .hub {
+    gap: 12px;
+    padding: 2px 14px 14px;
+  }
+
+  .platform {
+    padding: 14px;
+    gap: 10px;
+  }
+
+  .platform-head {
+    gap: 10px;
+  }
+
+  .platform-mark {
+    width: 36px;
+    height: 36px;
+    border-radius: 10px;
+  }
+
+  .platform-titles h2 {
+    font-size: 15px;
+  }
+
+  .platform-titles p {
+    font-size: 11px;
+  }
+
+  /* Compact 3D phone stage */
+  .phone-stage {
+    height: 180px;
+  }
+
+  .phone {
+    width: 86px;
+    height: 172px;
+    border-radius: 19px;
+  }
+
+  .phone--android {
+    border-radius: 16px;
+  }
+
+  .phone-screen {
+    inset: 4px;
+    border-radius: 15px;
+  }
+
+  .phone--android .phone-screen {
+    border-radius: 12px;
+  }
+
+  .phone-key--a {
+    top: 42px;
+    height: 14px;
+  }
+
+  .phone-key--b {
+    top: 62px;
+    height: 24px;
+  }
+
+  .phone-key--c {
+    top: 52px;
+    height: 28px;
+  }
+
+  .phone-island {
+    top: 5px;
+    width: 26px;
+    height: 8px;
+  }
+
+  .phone-punch {
+    top: 5px;
+    width: 6px;
+    height: 6px;
+  }
+
+  .phone-caption {
+    font-size: 8px;
+    bottom: 12px;
+  }
+
+  .phone-floor {
+    width: 90px;
+    height: 14px;
+  }
+
+  .device-card::before {
+    height: 180px;
+  }
+
+  .device-body {
+    padding: 2px 10px 12px;
+    gap: 8px;
+  }
+
+  .device-name {
+    font-size: 13.5px;
+  }
+
+  .device-sub {
+    font-size: 11px;
+  }
+
+  .status-pill {
+    height: 23px;
+    padding: 0 9px;
+    font-size: 11px;
+    gap: 5px;
+  }
+
+  /* Dual Studio Compact */
+  .dual-studio-card {
+    padding: 12px 16px;
+    margin-bottom: 2px;
+    border-radius: 14px;
+  }
+
+  .dual-studio-top {
+    gap: 8px;
+    margin-bottom: 10px;
+  }
+
+  .dual-studio-brand {
+    gap: 8px;
+  }
+
+  .dual-studio-tag {
+    font-size: 0.72rem;
+    padding: 2px 6px;
+  }
+
+  .dual-device-pill {
+    padding: 3px 8px;
+    font-size: 0.74rem;
+  }
+
+  .dual-device-pill .device-name {
+    max-width: 96px;
+  }
+
+  .mode-btn {
+    padding: 4px 8px;
+    font-size: 0.72rem;
+  }
+
+  .dual-studio-bottom {
+    gap: 8px;
+  }
+
+  .dual-actions-group {
+    gap: 7px;
+  }
+
+  .dual-actions-group .btn {
+    height: 31px;
+    padding: 0 11px;
+    font-size: 0.78rem;
+  }
+
+  .dual-hint-text {
+    font-size: 0.69rem;
+  }
+
+  .segmented {
+    padding: 2px;
+  }
+
+  .segment {
+    height: 25px;
+    padding: 0 10px;
+    font-size: 11.5px;
+  }
+}
+
+/* 2. Narrow Screens (<= 760px) - clean single column */
+@media (max-width: 760px) {
+  .hub {
+    grid-template-columns: 1fr;
+    gap: 14px;
+    padding: 4px 12px 16px;
+  }
+
+  .dual-studio-card {
+    padding: 12px 14px;
+  }
+
+  .dual-device-pill .device-name {
+    max-width: 140px;
+  }
+}
+
+/* 3. Shorter Window Heights (<= 820px) */
+@media (max-height: 820px) {
+  .titlebar {
+    height: 54px;
+    padding: 0 18px 0 84px;
+  }
+
+  .hub {
+    gap: 10px;
+    padding: 2px 14px 10px;
+  }
+
+  .dual-studio-card {
+    padding: 9px 14px;
+    margin-bottom: 2px;
+  }
+
+  .dual-studio-top {
+    margin-bottom: 6px;
+  }
+
+  .platform {
+    padding: 10px 12px;
+    gap: 8px;
+  }
+
+  .phone-stage {
+    height: 155px;
+  }
+
+  .phone {
+    width: 75px;
+    height: 150px;
+    border-radius: 17px;
+  }
+
+  .phone-screen {
+    inset: 3.5px;
+    border-radius: 13.5px;
+  }
+
+  .phone-floor {
+    width: 80px;
+    height: 12px;
+    bottom: 2px;
+  }
+
+  .device-card::before {
+    height: 155px;
+  }
+
+  .device-body {
+    padding: 2px 8px 8px;
+    gap: 6px;
+  }
+
+  .platform-footer {
+    padding-top: 8px;
+  }
+
+  .setting {
+    padding: 6px 0;
+  }
+
+  .setting-detail {
+    font-size: 11px;
+    line-height: 1.3;
+  }
+
+  .quality-note {
+    font-size: 11px;
+  }
+}
+
+/* 4. Super Compact Height (<= 680px) */
+@media (max-height: 680px) {
+  .titlebar {
+    height: 48px;
+  }
+
+  .phone-stage {
+    height: 128px;
+  }
+
+  .phone {
+    width: 62px;
+    height: 124px;
+    border-radius: 14px;
+  }
+
+  .phone-screen {
+    inset: 3px;
+    border-radius: 11px;
+  }
+
+  .device-card::before {
+    height: 128px;
+  }
+
+  .dual-hint-text {
+    display: none;
+  }
+
+  .setting-detail {
+    display: none;
   }
 }
 

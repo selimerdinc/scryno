@@ -1,11 +1,8 @@
 cask "scryno" do
-  arch arm: "-arm64", intel: ""
-
   version "1.0.9"
-  sha256 arm:   "020f1c74a002bbbb9e6170da25f6c75242263732712b89069213c5b9fbce96f5",
-         intel: "020f1c74a002bbbb9e6170da25f6c75242263732712b89069213c5b9fbce96f5"
+  sha256 "020f1c74a002bbbb9e6170da25f6c75242263732712b89069213c5b9fbce96f5"
 
-  url "https://github.com/selimerdinc/scryno/releases/download/build-#{version.sub(/^1\.0\./, '')}/Scryno-#{version}#{arch}.dmg"
+  url "https://github.com/selimerdinc/scryno/releases/download/build-#{version.sub(/^1\.0\./, '')}/Scryno-#{version}-arm64.dmg"
   name "Scryno"
   desc "Android and iPhone mirroring & control desktop app"
   homepage "https://github.com/selimerdinc/scryno"
@@ -22,7 +19,8 @@ cask "scryno" do
   end
 
   auto_updates true
-  depends_on macos: :monterey
+  depends_on macos: ">= :sonoma"
+  depends_on arch: :arm64
 
   app "Scryno.app"
 

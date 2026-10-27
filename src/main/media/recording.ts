@@ -1,15 +1,18 @@
-import { ChildProcessWithoutNullStreams, spawn, execFile } from 'child_process'
+import { type ChildProcessByStdio, spawn, execFile } from 'child_process'
+import type { Readable } from 'stream'
 import { existsSync } from 'fs'
 import { promisify } from 'util'
 import { resolveBinary } from '../paths'
-import { makeCapturePath } from './capturePaths'
+import { makeCapturePath, makeTempCapturePath } from './capturePaths'
+import { isDualRecordingActive } from './dualVideo'
 
 const execFileAsync = promisify(execFile)
 
 interface ActiveRecording {
-  process: ChildProcessWithoutNullStreams
+  process: ChildProcessByStdio<null, Readable, Readable>
   devicePath: string
   startedAt: number
+  isDual?: boolean
 }
 
 const recordings = new Map<string, ActiveRecording>()
@@ -23,11 +26,15 @@ export function isRecording(deviceId: string): boolean {
   return recordings.has(deviceId)
 }
 
+export function listAdbRecordings(): string[] {
+  return Array.from(recordings.keys())
+}
+
 /**
  * Records via adb screenrecord while scrcpy mirroring can stay open.
  * Stop pulls the file into Downloads/Scryno.
  */
-export function startAdbRecording(deviceId: string): { deviceId: string; startedAt: number } {
+export function startAdbRecording(deviceId: string, isDual = false): { deviceId: string; startedAt: number } {
   if (!deviceId) {
     throw Object.assign(new Error('Geçersiz cihaz kimliği'), { code: 'INVALID_DEVICE' })
   }
@@ -38,7 +45,7 @@ export function startAdbRecording(deviceId: string): { deviceId: string; started
   const adbPath = resolveBinary('adb')
   const devicePath = remoteTempPath(deviceId)
 
-  let child: ChildProcessWithoutNullStreams
+  let child: ChildProcessByStdio<null, Readable, Readable>
   try {
     child = spawn(
       adbPath,
@@ -56,7 +63,12 @@ export function startAdbRecording(deviceId: string): { deviceId: string; started
   }
 
   const startedAt = Date.now()
-  recordings.set(deviceId, { process: child, devicePath, startedAt })
+  recordings.set(deviceId, {
+    process: child,
+    devicePath,
+    startedAt,
+    isDual: isDual || isDualRecordingActive()
+  })
 
   child.on('error', () => {
     recordings.delete(deviceId)
@@ -83,7 +95,10 @@ export async function stopAdbRecording(deviceId: string): Promise<{ path: string
   }
 
   const adbPath = resolveBinary('adb')
-  const outPath = makeCapturePath('recording', 'mp4')
+  const isDual = active.isDual || isDualRecordingActive()
+  const outPath = isDual
+    ? makeTempCapturePath('recording-android', 'mp4')
+    : makeCapturePath('recording', 'mp4')
 
   try {
     await execFileAsync(adbPath, ['-s', deviceId, 'pull', active.devicePath, outPath], {

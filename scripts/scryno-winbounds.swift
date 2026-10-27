@@ -1,3 +1,4 @@
+import AppKit
 import ApplicationServices
 import CoreGraphics
 import Foundation
@@ -22,11 +23,38 @@ struct Match: Codable {
   let owner: String
   let name: String
   let pid: Int32
+  let onScreen: Bool
 }
 
 struct MoveResult: Codable {
   let ok: Bool
   let trusted: Bool
+}
+
+struct FullscreenResult: Codable {
+  let fullscreen: Bool
+}
+
+func isOtherAppFullscreenActive() -> Bool {
+  guard let front = NSWorkspace.shared.frontmostApplication else {
+    return false
+  }
+  let bundle = front.bundleIdentifier ?? ""
+  let name = front.localizedName ?? ""
+  if bundle.contains("scryno") || bundle.contains("iPhoneMirroring") ||
+     name.contains("Scryno") || name.contains("iPhone Mirroring") || name.contains("scrcpy") {
+    return false
+  }
+  let axApp = AXUIElementCreateApplication(front.processIdentifier)
+  var focusedWindow: CFTypeRef?
+  if AXUIElementCopyAttributeValue(axApp, kAXFocusedWindowAttribute as CFString, &focusedWindow) == .success {
+    var isFS: CFTypeRef?
+    if AXUIElementCopyAttributeValue(focusedWindow as! AXUIElement, "AXFullScreen" as CFString, &isFS) == .success,
+       let fs = isFS as? Bool, fs {
+      return true
+    }
+  }
+  return false
 }
 
 // Special needle: dock to macOS's own iPhone Mirroring window instead of scrcpy.
@@ -37,9 +65,10 @@ let command = arguments.first ?? ""
 let isMove = command == "move"
 let isSize = command == "size"
 let isLarger = command == "larger"
+let isFullscreen = command == "is-fullscreen"
 let needle = (isLarger
   ? iphoneMirroringNeedle
-  : (isMove || isSize ? arguments.dropFirst().first : arguments.first)) ?? ""
+  : (isMove || isSize ? arguments.dropFirst().first : (isFullscreen ? "" : arguments.first))) ?? ""
 
 func readBounds(_ raw: [String: Any]) -> Bounds? {
   guard let dict = raw[kCGWindowBounds as String] as? [String: Any] else {
@@ -56,13 +85,15 @@ func readBounds(_ raw: [String: Any]) -> Bounds? {
 }
 
 func findMirror() -> Match? {
-  let options = CGWindowListOption(arrayLiteral: .optionOnScreenOnly, .excludeDesktopElements)
+  let options = CGWindowListOption(arrayLiteral: .excludeDesktopElements)
   guard let info = CGWindowListCopyWindowInfo(options, kCGNullWindowID) as? [[String: Any]] else {
     return nil
   }
 
-  var titleMatches: [Match] = []
-  var scrcpyMatches: [Match] = []
+  var onScreenTitleMatches: [Match] = []
+  var offScreenTitleMatches: [Match] = []
+  var onScreenScrcpyMatches: [Match] = []
+  var offScreenScrcpyMatches: [Match] = []
 
   for window in info {
     let layer = (window[kCGWindowLayer as String] as? NSNumber)?.intValue ?? -1
@@ -74,6 +105,7 @@ func findMirror() -> Match? {
     let name = (window[kCGWindowName as String] as? String) ?? ""
     let ownerLower = owner.lowercased()
     let pid = (window[kCGWindowOwnerPID as String] as? NSNumber)?.int32Value ?? 0
+    let onScreen = (window[kCGWindowIsOnscreen as String] as? Bool) ?? false
 
     if ownerLower.contains("electron") || ownerLower.contains("scryno") {
       continue
@@ -90,22 +122,35 @@ func findMirror() -> Match? {
       height: bounds.height,
       owner: owner,
       name: name,
-      pid: pid
+      pid: pid,
+      onScreen: onScreen
     )
 
     if needle == iphoneMirroringNeedle {
       if owner == "iPhone Mirroring" {
-        titleMatches.append(match)
+        if onScreen {
+          onScreenTitleMatches.append(match)
+        } else {
+          offScreenTitleMatches.append(match)
+        }
       }
       continue
     }
 
     if !needle.isEmpty && (name.contains(needle) || name.localizedCaseInsensitiveContains("Scryno")) {
-      titleMatches.append(match)
+      if onScreen {
+        onScreenTitleMatches.append(match)
+      } else {
+        offScreenTitleMatches.append(match)
+      }
     }
 
     if ownerLower.contains("scrcpy") || ownerLower.contains("sdl") {
-      scrcpyMatches.append(match)
+      if onScreen {
+        onScreenScrcpyMatches.append(match)
+      } else {
+        offScreenScrcpyMatches.append(match)
+      }
     }
   }
 
@@ -113,7 +158,7 @@ func findMirror() -> Match? {
     items.max { ($0.width * $0.height) < ($1.width * $1.height) }
   }
 
-  return largest(titleMatches) ?? largest(scrcpyMatches)
+  return largest(onScreenTitleMatches) ?? largest(onScreenScrcpyMatches) ?? largest(offScreenTitleMatches) ?? largest(offScreenScrcpyMatches)
 }
 
 func printJSON<T: Encodable>(_ value: T) {
@@ -263,7 +308,9 @@ func enlargeIphoneMirroring() -> Bool {
   return AXUIElementPerformAction(item, kAXPressAction as CFString) == .success
 }
 
-if isLarger {
+if isFullscreen {
+  printJSON(FullscreenResult(fullscreen: isOtherAppFullscreenActive()))
+} else if isLarger {
   _ = enlargeIphoneMirroring()
   usleep(250_000)
   if let chosen = findMirror() {

@@ -59,6 +59,7 @@ struct Target {
   let pid: pid_t
   /// Top-left origin, global display coordinates (CoreGraphics space).
   var frame: CGRect
+  var isOnScreen: Bool
 }
 
 func readFrame(_ raw: [String: Any]) -> CGRect? {
@@ -98,8 +99,8 @@ func findTarget(needle: String) -> Target? {
     let owner = (window[kCGWindowOwnerName as String] as? String) ?? ""
     let name = (window[kCGWindowName as String] as? String) ?? ""
     let windowID = (window[kCGWindowNumber as String] as? NSNumber)?.uint32Value ?? 0
-    let target = Target(windowID: windowID, pid: pid, frame: frame)
     let onScreen = (window[kCGWindowIsOnscreen as String] as? Bool) == true
+    let target = Target(windowID: windowID, pid: pid, frame: frame, isOnScreen: onScreen)
 
     if needle == iphoneMirroringNeedle {
       if owner == "iPhone Mirroring" && !name.contains("Welcome") {
@@ -125,17 +126,46 @@ func findTarget(needle: String) -> Target? {
 }
 
 func refreshTarget(_ target: Target) -> Target? {
-  guard
-    let info = CGWindowListCopyWindowInfo([.optionIncludingWindow], target.windowID) as? [[String: Any]],
-    let raw = info.first,
-    let frame = readFrame(raw),
-    frame.width >= 100, frame.height >= 100
-  else {
+  let options = CGWindowListOption(arrayLiteral: .excludeDesktopElements)
+  guard let info = CGWindowListCopyWindowInfo(options, kCGNullWindowID) as? [[String: Any]] else {
     return nil
   }
-  var updated = target
-  updated.frame = frame
-  return updated
+  for window in info {
+    let wid = (window[kCGWindowNumber as String] as? NSNumber)?.uint32Value ?? 0
+    if wid == target.windowID {
+      guard let frame = readFrame(window), frame.width >= 100, frame.height >= 100 else {
+        return nil
+      }
+      let onScreen = (window[kCGWindowIsOnscreen as String] as? Bool) == true
+      var updated = target
+      updated.frame = frame
+      updated.isOnScreen = onScreen
+      return updated
+    }
+  }
+  return nil
+}
+
+func isOtherAppFullscreenActive() -> Bool {
+  guard let front = NSWorkspace.shared.frontmostApplication else {
+    return false
+  }
+  let bundle = front.bundleIdentifier ?? ""
+  let name = front.localizedName ?? ""
+  if bundle.contains("scryno") || bundle.contains("iPhoneMirroring") ||
+     name.contains("Scryno") || name.contains("iPhone Mirroring") || name.contains("scrcpy") {
+    return false
+  }
+  let axApp = AXUIElementCreateApplication(front.processIdentifier)
+  var focusedWindow: CFTypeRef?
+  if AXUIElementCopyAttributeValue(axApp, kAXFocusedWindowAttribute as CFString, &focusedWindow) == .success {
+    var isFS: CFTypeRef?
+    if AXUIElementCopyAttributeValue(focusedWindow as! AXUIElement, "AXFullScreen" as CFString, &isFS) == .success,
+       let fs = isFS as? Bool, fs {
+      return true
+    }
+  }
+  return false
 }
 
 /// Usable area of a screen in CoreGraphics space (origin top-left, y down).
@@ -424,6 +454,7 @@ final class ChromeController: NSObject, DragSurfaceDelegate {
   private var dragPanelOrigin = CGPoint.zero
   private var dragTargetOrigin = CGPoint.zero
   private var announcedReady = false
+  private var wasFrontmost = false
   private var recordingStartedAt: Date?
   private var messageGeneration = 0
 
@@ -447,7 +478,7 @@ final class ChromeController: NSObject, DragSurfaceDelegate {
     panel.hidesOnDeactivate = false
     panel.isMovable = false
     panel.becomesKeyOnlyIfNeeded = true
-    panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary, .ignoresCycle]
+    panel.collectionBehavior = [.moveToActiveSpace, .stationary, .ignoresCycle]
     panel.appearance = NSAppearance(named: .darkAqua)
 
     surface.delegate = self
@@ -587,8 +618,25 @@ final class ChromeController: NSObject, DragSurfaceDelegate {
     if let current = target, let refreshed = refreshTarget(current) {
       target = refreshed
       lostSince = nil
+
+      if !refreshed.isOnScreen || isOtherAppFullscreenActive() {
+        if panel.isVisible {
+          panel.orderOut(nil)
+        }
+        wasFrontmost = false
+        return
+      }
+
       place(over: refreshed)
       updateLevel(for: refreshed)
+
+      let isFront = NSWorkspace.shared.frontmostApplication?.processIdentifier == refreshed.pid
+      if isFront && !wasFrontmost {
+        wasFrontmost = true
+        emit(["event": "focused", "pid": refreshed.pid, "platform": options.platform])
+      } else if !isFront {
+        wasFrontmost = false
+      }
       return
     }
 
@@ -602,8 +650,12 @@ final class ChromeController: NSObject, DragSurfaceDelegate {
         if firstSighting {
           makeRoomForBar(found)
         }
-        place(over: found)
-        updateLevel(for: found)
+        if found.isOnScreen && !isOtherAppFullscreenActive() {
+          place(over: found)
+          updateLevel(for: found)
+        } else if panel.isVisible {
+          panel.orderOut(nil)
+        }
         if !announcedReady {
           announcedReady = true
           emit(["event": "ready"])
@@ -661,6 +713,12 @@ final class ChromeController: NSObject, DragSurfaceDelegate {
     guard let current = target else {
       return
     }
+    // Activate target window so it raises in front of background apps
+    if let app = NSRunningApplication(processIdentifier: current.pid) {
+      app.activate()
+    }
+    emit(["event": "activate", "pid": current.pid, "platform": options.platform])
+
     if !mover.isTrusted(prompt: true) {
       showMessage("Sürüklemek için Erişilebilirlik izni ver", kind: "error")
       emit(["event": "trust", "trusted": false])
@@ -692,20 +750,30 @@ final class ChromeController: NSObject, DragSurfaceDelegate {
 
   // MARK: Actions
 
+  private func activateTarget() {
+    if let current = target, let app = NSRunningApplication(processIdentifier: current.pid) {
+      app.activate()
+    }
+    emit(["event": "activate", "platform": options.platform])
+  }
+
   @objc private func onClose() {
     emit(["event": "action", "name": "close"])
   }
 
   @objc private func onScreenshot() {
+    activateTarget()
     flash()
     emit(["event": "action", "name": "screenshot"])
   }
 
   @objc private func onDraw() {
+    activateTarget()
     emit(["event": "action", "name": "draw"])
   }
 
   @objc private func onRecord() {
+    activateTarget()
     if recordingStartedAt != nil {
       setRecording(false)
       showMessage("Kaydediliyor…", kind: "info")
@@ -714,6 +782,7 @@ final class ChromeController: NSObject, DragSurfaceDelegate {
   }
 
   @objc private func onFolder() {
+    activateTarget()
     emit(["event": "action", "name": "folder"])
   }
 

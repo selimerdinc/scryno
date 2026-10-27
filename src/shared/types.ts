@@ -140,6 +140,16 @@ export interface PreviewResult {
 
 export type PreviewResponse = PreviewResult | ApiError
 
+export interface DualScreenshotRawResult {
+  ok: true
+  androidImage: string
+  iosImage: string
+  androidName: string
+  iosName: string
+}
+
+export type DualScreenshotRawResponse = DualScreenshotRawResult | ApiError
+
 export interface StartMirrorResult {
   ok: true
   session: MirrorSessionInfo

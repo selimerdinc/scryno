@@ -5,7 +5,7 @@ import ScreenCaptureKit
 
 // Usage:
 //   scryno-wincapture shot <out.png>    → PNG of the iPhone Mirroring window
-//   scryno-wincapture record <out.mp4>  → records the window (+ annotations) until stdin EOF or SIGINT
+//   scryno-wincapture record <out.mp4>  → records the window until SIGINT or SIGTERM
 // Requires Screen Recording permission for the parent app.
 
 let ownerName = "iPhone Mirroring"
@@ -22,85 +22,105 @@ guard arguments.count >= 2 else {
 let mode = arguments[0]
 let outURL = URL(fileURLWithPath: arguments[1])
 
-struct WindowTarget {
-  let mirrorWindow: SCWindow
-  let overlayWindow: SCWindow?
-  let display: SCDisplay?
+func findMirrorWindow() async -> SCWindow? {
+  if let content = try? await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true) {
+    let mirrorWindows = content.windows.filter {
+      ($0.owningApplication?.applicationName == ownerName) && ($0.frame.width > 150) && ($0.frame.height > 150)
+    }
+    if let best = mirrorWindows.max(by: { ($0.frame.width * $0.frame.height) < ($1.frame.width * $1.frame.height) }) {
+      return best
+    }
+  }
+  if let content = try? await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: false) {
+    let mirrorWindows = content.windows.filter {
+      ($0.owningApplication?.applicationName == ownerName) && ($0.frame.width > 150) && ($0.frame.height > 150)
+    }
+    return mirrorWindows.max(by: { ($0.frame.width * $0.frame.height) < ($1.frame.width * $1.frame.height) })
+  }
+  return nil
 }
 
-func findTargets() async -> WindowTarget? {
+func findOverlayWindow(for mirrorWindow: SCWindow) async -> SCWindow? {
   guard let content = try? await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true) else {
     return nil
   }
-  let mirrorWindows = content.windows.filter {
-    ($0.owningApplication?.applicationName == ownerName) && ($0.frame.width > 150) && ($0.frame.height > 150)
+  return content.windows.first { w in
+    guard w.owningApplication?.applicationName == "Scryno" else { return false }
+    if let title = w.title, title.contains("Overlay") { return true }
+    let dx = abs(w.frame.origin.x - mirrorWindow.frame.origin.x)
+    let dy = abs(w.frame.origin.y - mirrorWindow.frame.origin.y)
+    let dw = abs(w.frame.width - mirrorWindow.frame.width)
+    let dh = abs(w.frame.height - mirrorWindow.frame.height)
+    return dx < 60 && dy < 60 && dw < 60 && dh < 60
   }
-  guard let mirrorWindow = mirrorWindows.max(by: { ($0.frame.width * $0.frame.height) < ($1.frame.width * $1.frame.height) }) else {
-    return nil
-  }
-
-  // Find Scryno overlay window that sits right on top of iPhone Mirroring
-  let overlayWindow = content.windows.first { win in
-    let app = win.owningApplication?.applicationName ?? ""
-    let title = win.title ?? ""
-    let isScryno = app.contains("Scryno") || title.contains("Scryno") || title.contains("Overlay")
-    let closeX = abs(win.frame.origin.x - mirrorWindow.frame.origin.x) < 40
-    let closeY = abs(win.frame.origin.y - mirrorWindow.frame.origin.y) < 40
-    let closeW = abs(win.frame.width - mirrorWindow.frame.width) < 40
-    let closeH = abs(win.frame.height - mirrorWindow.frame.height) < 40
-    return isScryno && closeX && closeY && closeW && closeH
-  }
-
-  let display = content.displays.first { d in
-    d.frame.intersects(mirrorWindow.frame)
-  } ?? content.displays.first
-
-  return WindowTarget(mirrorWindow: mirrorWindow, overlayWindow: overlayWindow, display: display)
 }
 
 final class Recorder: NSObject, SCRecordingOutputDelegate, SCStreamDelegate {
   var stream: SCStream?
+  var output: SCRecordingOutput?
+  var filter: SCContentFilter?
+  var config: SCStreamConfiguration?
+  var recordingConfig: SCRecordingOutputConfiguration?
+  var overlayTimer: DispatchSourceTimer?
+  var stopRequested = false
   var finished = false
+
+  func recordingOutputDidStartRecording(_ recordingOutput: SCRecordingOutput) {
+    FileHandle.standardError.write(Data("{\"event\":\"recording-started\"}\n".utf8))
+  }
 
   func recordingOutputDidFinishRecording(_ recordingOutput: SCRecordingOutput) {
     finished = true
-    exit(0)
+    FileHandle.standardError.write(Data("{\"event\":\"recording-finished\",\"stopRequested\":\(stopRequested)}\n".utf8))
+    if stopRequested {
+      exit(0)
+    } else {
+      FileHandle.standardError.write(Data("{\"event\":\"warning-finished-without-stop-requested\"}\n".utf8))
+    }
   }
 
   func recordingOutput(_ recordingOutput: SCRecordingOutput, didFailWithError error: Error) {
-    fail("recording failed: \(error.localizedDescription)", 5)
+    let ns = error as NSError
+    FileHandle.standardError.write(Data("{\"event\":\"recording-error\",\"code\":\(ns.code),\"detail\":\"\(ns.localizedDescription)\"}\n".utf8))
+    if stopRequested {
+      exit(0)
+    }
   }
 
   func stream(_ stream: SCStream, didStopWithError error: Error) {
-    fail("stream stopped: \(error.localizedDescription)", 6)
+    let ns = error as NSError
+    FileHandle.standardError.write(Data("{\"event\":\"stream-stopped\",\"code\":\(ns.code),\"detail\":\"\(ns.localizedDescription)\"}\n".utf8))
+    if stopRequested {
+      exit(0)
+    }
   }
 }
 
 let recorder = Recorder()
 
-func installStopHandlers() {
-  FileHandle.standardInput.readabilityHandler = { handle in
-    let data = handle.availableData
-    if data.isEmpty {
-      handle.readabilityHandler = nil
-      Task {
-        try? await recorder.stream?.stopCapture()
-        try? await Task.sleep(nanoseconds: 800_000_000)
-        exit(0)
-      }
+func requestStop(reason: String) {
+  FileHandle.standardError.write(Data("{\"event\":\"requestStop\",\"reason\":\"\(reason)\"}\n".utf8))
+  guard !recorder.stopRequested else { return }
+  recorder.stopRequested = true
+  recorder.overlayTimer?.cancel()
+  recorder.overlayTimer = nil
+  Task {
+    if let stream = recorder.stream {
+      try? await stream.stopCapture()
     }
   }
+  // Fallback timeout: if recordingOutputDidFinishRecording hasn't fired in 8 seconds, exit
+  DispatchQueue.main.asyncAfter(deadline: .now() + 8.0) {
+    exit(0)
+  }
+}
 
+func installStopHandlers() {
   for sig in [SIGINT, SIGTERM] {
     signal(sig, SIG_IGN)
     let source = DispatchSource.makeSignalSource(signal: sig, queue: .main)
     source.setEventHandler {
-      Task {
-        try? await recorder.stream?.stopCapture()
-        // Give the recording output a moment to flush before forcing exit.
-        try? await Task.sleep(nanoseconds: 800_000_000)
-        exit(0)
-      }
+      requestStop(reason: "signal-\(sig)")
     }
     source.resume()
     signalSources.append(source)
@@ -108,27 +128,68 @@ func installStopHandlers() {
 }
 
 var signalSources: [DispatchSourceSignal] = []
+var parentWatch: DispatchSourceTimer?
+
+// Finalize the recording if Scryno exits without signalling us (crash / force quit).
+func installParentWatch() {
+  let parentPid = getppid()
+  let timer = DispatchSource.makeTimerSource(queue: .main)
+  timer.schedule(deadline: .now() + 1.0, repeating: 1.0)
+  timer.setEventHandler {
+    if getppid() != parentPid {
+      requestStop(reason: "parent-exited")
+    }
+  }
+  timer.resume()
+  parentWatch = timer
+}
 
 // ScreenCaptureKit needs a WindowServer connection, which a bare CLI only gets via NSApplication.
 _ = NSApplication.shared
 
 Task {
-  guard let target = await findTargets() else {
+  guard let mirrorWindow = await findMirrorWindow() else {
     fail("iPhone Mirroring penceresi bulunamadı", 2)
   }
 
-  let mirrorWindow = target.mirrorWindow
+  let overlayWindow = await findOverlayWindow(for: mirrorWindow)
+  var filter: SCContentFilter
+  var sourceRect: CGRect?
 
-  // For screenshot and small previews ('shot'), ALWAYS capture ONLY the independent window.
-  // This guarantees background windows (like Scryno main window) never leak into the preview.
+  if let content = try? await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true),
+     let display = content.displays.first(where: { $0.frame.intersects(mirrorWindow.frame) }) {
+    var includeWindows = [mirrorWindow]
+    if let overlay = overlayWindow {
+      includeWindows.append(overlay)
+      FileHandle.standardError.write(Data("{\"event\":\"overlay-included\"}\n".utf8))
+    }
+    filter = SCContentFilter(display: display, including: includeWindows)
+    let localOriginX = mirrorWindow.frame.origin.x - display.frame.origin.x
+    let localOriginY = mirrorWindow.frame.origin.y - display.frame.origin.y
+    sourceRect = CGRect(x: localOriginX, y: localOriginY, width: mirrorWindow.frame.width, height: mirrorWindow.frame.height)
+  } else {
+    filter = SCContentFilter(desktopIndependentWindow: mirrorWindow)
+  }
+
+  let scale = Double(filter.pointPixelScale)
+
+  let config = SCStreamConfiguration()
+  if let rect = sourceRect {
+    config.sourceRect = rect
+  }
+  config.width = Int(mirrorWindow.frame.width * scale)
+  config.height = Int(mirrorWindow.frame.height * scale)
+  config.scalesToFit = true
+  config.showsCursor = false
+  config.pixelFormat = kCVPixelFormatType_32BGRA
+  config.capturesAudio = false
+  if #available(macOS 15.0, *) {
+    config.captureMicrophone = false
+  }
+  config.minimumFrameInterval = CMTime(value: 1, timescale: 60)
+  config.queueDepth = 5
+
   if mode == "shot" {
-    let filter = SCContentFilter(desktopIndependentWindow: mirrorWindow)
-    let scale = Double(filter.pointPixelScale)
-    let config = SCStreamConfiguration()
-    config.width = Int(mirrorWindow.frame.width * scale)
-    config.height = Int(mirrorWindow.frame.height * scale)
-    config.showsCursor = false
-
     do {
       let image = try await SCScreenshotManager.captureImage(contentFilter: filter, configuration: config)
       guard let destination = CGImageDestinationCreateWithURL(outURL as CFURL, "public.png" as CFString, 1, nil) else {
@@ -142,38 +203,11 @@ Task {
     }
   }
 
-  // For video recording ('record'):
-  // If overlay window exists, capture BOTH mirrorWindow + overlayWindow strictly without any background windows.
-  var filter: SCContentFilter
-  var config = SCStreamConfiguration()
-
-  if let display = target.display, let overlay = target.overlayWindow {
-    filter = SCContentFilter(display: display, including: [mirrorWindow, overlay])
-    let scale = Double(filter.pointPixelScale)
-    let localX = mirrorWindow.frame.origin.x - display.frame.origin.x
-    let localY = mirrorWindow.frame.origin.y - display.frame.origin.y
-
-    config.sourceRect = CGRect(
-      x: localX,
-      y: localY,
-      width: mirrorWindow.frame.width,
-      height: mirrorWindow.frame.height
-    )
-    config.width = Int(mirrorWindow.frame.width * scale)
-    config.height = Int(mirrorWindow.frame.height * scale)
-  } else {
-    filter = SCContentFilter(desktopIndependentWindow: mirrorWindow)
-    let scale = Double(filter.pointPixelScale)
-    config.width = Int(mirrorWindow.frame.width * scale)
-    config.height = Int(mirrorWindow.frame.height * scale)
-  }
-
-  config.showsCursor = false
-  config.minimumFrameInterval = CMTime(value: 1, timescale: 60)
-
+  // Video recording mode ('record')
   let recordingConfig = SCRecordingOutputConfiguration()
   recordingConfig.outputURL = outURL
   recordingConfig.outputFileType = .mp4
+  recordingConfig.videoCodecType = .h264
   let output = SCRecordingOutput(configuration: recordingConfig, delegate: recorder)
 
   let stream = SCStream(filter: filter, configuration: config, delegate: recorder)
@@ -183,9 +217,45 @@ Task {
   } catch {
     fail("kayıt başlatılamadı: \(error.localizedDescription)", 5)
   }
+
+  recorder.filter = filter
+  recorder.config = config
+  recorder.recordingConfig = recordingConfig
   recorder.stream = stream
+  recorder.output = output
+
+  var currentOverlayID: CGWindowID? = overlayWindow?.windowID
+  let overlayTimer = DispatchSource.makeTimerSource(queue: .main)
+  overlayTimer.schedule(deadline: .now() + 1.0, repeating: 1.0)
+  overlayTimer.setEventHandler {
+    Task {
+      guard let stream = recorder.stream, !recorder.stopRequested else { return }
+      let latestOverlay = await findOverlayWindow(for: mirrorWindow)
+      let newOverlayID = latestOverlay?.windowID
+      if newOverlayID != currentOverlayID {
+        currentOverlayID = newOverlayID
+        FileHandle.standardError.write(Data("{\"event\":\"overlay-changed\",\"hasOverlay\":\(newOverlayID != nil)}\n".utf8))
+        if let content = try? await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true),
+           let display = content.displays.first(where: { $0.frame.intersects(mirrorWindow.frame) }) {
+          var includeList = [mirrorWindow]
+          if let ov = latestOverlay {
+            includeList.append(ov)
+          }
+          let updatedFilter = SCContentFilter(display: display, including: includeList)
+          recorder.filter = updatedFilter
+          try? await stream.updateContentFilter(updatedFilter)
+        }
+      }
+    }
+  }
+  overlayTimer.resume()
+  recorder.overlayTimer = overlayTimer
+
   installStopHandlers()
+  installParentWatch()
   FileHandle.standardError.write(Data("{\"event\":\"recording\"}\n".utf8))
 }
 
 RunLoop.main.run()
+
+

@@ -1,6 +1,7 @@
 import { execFile } from 'child_process'
 import { existsSync, statSync, writeFileSync } from 'fs'
 import { promisify } from 'util'
+import { captureAndroidMirrorScreenshot } from '../android/scrcpySession'
 import { iosToolEnv, resolveIdeviceBinary } from '../ios/binaries'
 import { captureIosScreenshot } from '../ios/goios'
 import { resolveBinary } from '../paths'
@@ -13,8 +14,19 @@ export async function takeAndroidScreenshot(deviceId: string): Promise<{ path: s
     throw Object.assign(new Error('Geçersiz cihaz kimliği'), { code: 'INVALID_DEVICE' })
   }
 
-  const adbPath = resolveBinary('adb')
   const outPath = makeCapturePath('screenshot', 'png')
+
+  try {
+    const mirrorBuf = await captureAndroidMirrorScreenshot(deviceId)
+    if (mirrorBuf && mirrorBuf.length > 32) {
+      writeFileSync(outPath, mirrorBuf)
+      return { path: outPath }
+    }
+  } catch (err) {
+    console.warn('[Screenshot] captureAndroidMirrorScreenshot error, fallback to adb:', err)
+  }
+
+  const adbPath = resolveBinary('adb')
 
   try {
     const { stdout } = await execFileAsync(adbPath, ['-s', deviceId, 'exec-out', 'screencap', '-p'], {
@@ -52,7 +64,7 @@ export async function takeAndroidScreenshot(deviceId: string): Promise<{ path: s
  * iOS screenshot via libimobiledevice. Requires a mounted Developer Disk Image
  * on the device (Xcode pairing / developer mode) — otherwise screenshotr is unavailable.
  */
-export async function takeIosScreenshot(udid: string): Promise<{ path: string }> {
+export async function takeIosScreenshot(udid: string, customPath?: string): Promise<{ path: string }> {
   if (!udid) {
     throw Object.assign(new Error('Geçersiz cihaz kimliği'), { code: 'INVALID_DEVICE' })
   }
@@ -63,7 +75,7 @@ export async function takeIosScreenshot(udid: string): Promise<{ path: string }>
     })
   }
 
-  const outPath = makeCapturePath('screenshot', 'png')
+  const outPath = customPath ?? makeCapturePath('screenshot', 'png')
 
   try {
     await captureIosScreenshot(udid, outPath)

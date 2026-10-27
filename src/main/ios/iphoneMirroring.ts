@@ -1,9 +1,11 @@
-import { ChildProcessWithoutNullStreams, execFile, spawn } from 'child_process'
+import { type ChildProcessByStdio, execFile, spawn } from 'child_process'
+import type { Readable } from 'stream'
 import { existsSync } from 'fs'
 import { promisify } from 'util'
-import { makeCapturePath } from '../media/capturePaths'
+import { makeCapturePath, makeTempCapturePath } from '../media/capturePaths'
+import { isDualRecordingActive } from '../media/dualVideo'
 import { resolveBinary } from '../paths'
-import { enlargeIphoneMirroringWindow, findMirrorWindowBounds } from '../ui/mirrorWindowBounds'
+import { enlargeIphoneMirroringWindow, findMirrorWindowBounds, isOtherAppFullscreen } from '../ui/mirrorWindowBounds'
 
 const execFileAsync = promisify(execFile)
 
@@ -13,9 +15,10 @@ const APP_PATH = '/System/Applications/iPhone Mirroring.app'
 const WINDOW_WAIT_MS = 15000
 
 interface ActiveWindowRecording {
-  process: ChildProcessWithoutNullStreams
+  process: ChildProcessByStdio<null, Readable, Readable>
   outPath: string
   exited: Promise<void>
+  getStderr?: () => string
 }
 
 const recordings = new Map<string, ActiveWindowRecording>()
@@ -50,6 +53,23 @@ export async function openIphoneMirroring(): Promise<boolean> {
   return false
 }
 
+/** Brings the macOS iPhone Mirroring window to the front. */
+export async function activateIphoneMirroring(): Promise<void> {
+  if (!isIphoneMirroringAvailable()) {
+    return
+  }
+  if (await isOtherAppFullscreen()) {
+    return
+  }
+  try {
+    await execFileAsync('osascript', ['-e', `tell application "${APP_NAME}" to activate`], {
+      timeout: 3000
+    })
+  } catch {
+    // Ignore error if app is closed or not responding
+  }
+}
+
 export async function enlargeIphoneMirroring(): Promise<{ message: string }> {
   const before = await findMirrorWindowBounds(IPHONE_MIRRORING_NEEDLE)
   if (!before) {
@@ -78,8 +98,8 @@ export async function quitIphoneMirroring(): Promise<void> {
   }
 }
 
-export async function captureIphoneMirroringScreenshot(): Promise<{ path: string }> {
-  const outPath = makeCapturePath('screenshot', 'png')
+export async function captureIphoneMirroringScreenshot(customPath?: string): Promise<{ path: string }> {
+  const outPath = customPath ?? makeCapturePath('screenshot', 'png')
   try {
     await execFileAsync(captureHelper(), ['shot', outPath], { timeout: 15000 })
   } catch (error) {
@@ -97,52 +117,96 @@ export async function captureIphoneMirroringScreenshot(): Promise<{ path: string
   return { path: outPath }
 }
 
-export function isIphoneMirroringRecording(deviceId: string): boolean {
-  return recordings.has(deviceId)
+export function isIphoneMirroringRecording(deviceId?: string): boolean {
+  if (deviceId) {
+    return recordings.has(deviceId) || (deviceId === '@iphone-mirroring' && recordings.size > 0)
+  }
+  return recordings.size > 0
 }
 
-export function startIphoneMirroringRecording(deviceId: string): { path: string } {
-  if (recordings.has(deviceId)) {
-    throw Object.assign(new Error('Bu cihaz için zaten kayıt var'), { code: 'RECORDING_EXISTS' })
+export function listIphoneMirroringRecordings(): string[] {
+  return Array.from(recordings.keys())
+}
+
+export function startIphoneMirroringRecording(deviceId: string, isDual = false): { path: string } {
+  // If an old dead process is still in the map, clean it up
+  const existing = recordings.get(deviceId)
+  if (existing && existing.process.exitCode === null) {
+    throw Object.assign(new Error('iPhone için zaten kayıt devam ediyor'), { code: 'RECORDING_EXISTS' })
   }
-  const outPath = makeCapturePath('recording', 'mp4')
-  const child = spawn(captureHelper(), ['record', outPath], { stdio: ['pipe', 'pipe', 'pipe'] })
-  const exited = new Promise<void>((resolve) => {
-    child.once('exit', () => resolve())
-    child.once('error', () => resolve())
-  })
-  child.once('exit', () => {
-    if (recordings.get(deviceId)?.process === child) {
-      recordings.delete(deviceId)
+  // Stop (rather than orphan) any capture process still tracked under another key.
+  for (const stale of recordings.values()) {
+    if (stale.process.exitCode === null) {
+      stale.process.kill('SIGINT')
     }
+  }
+  recordings.clear()
+
+  const outPath = (isDual || isDualRecordingActive())
+    ? makeTempCapturePath('recording-ios', 'mp4')
+    : makeCapturePath('recording', 'mp4')
+  const child = spawn(captureHelper(), ['record', outPath], { stdio: ['ignore', 'pipe', 'pipe'] })
+  let stderrText = ''
+  child.stderr.on('data', (d) => {
+    stderrText += d.toString()
+    console.error(`[iPhoneRecord stderr] ${d.toString().trim()}`)
   })
-  recordings.set(deviceId, { process: child, outPath, exited })
+  child.stdout.on('data', (d) => {
+    console.log(`[iPhoneRecord stdout] ${d.toString().trim()}`)
+  })
+
+  const exited = new Promise<void>((resolve) => {
+    child.once('exit', (code, sig) => {
+      console.log(`[iPhoneRecord exit] code=${code}, sig=${sig}`)
+      resolve()
+    })
+    child.once('error', (err) => {
+      console.error(`[iPhoneRecord error]`, err)
+      resolve()
+    })
+  })
+
+  recordings.set(deviceId, {
+    process: child,
+    outPath,
+    exited,
+    getStderr: () => stderrText
+  })
   return { path: outPath }
 }
 
-export async function stopIphoneMirroringRecording(deviceId: string): Promise<{ path: string }> {
-  const active = recordings.get(deviceId)
-  if (!active) {
-    throw Object.assign(new Error('Aktif kayıt yok'), { code: 'RECORDING_NOT_FOUND' })
+export async function stopIphoneMirroringRecording(deviceId?: string): Promise<{ path: string }> {
+  let targetKey = deviceId
+  let active = deviceId ? recordings.get(deviceId) : undefined
+  if (!active && recordings.size > 0) {
+    const firstEntry = Array.from(recordings.entries())[0]
+    targetKey = firstEntry[0]
+    active = firstEntry[1]
   }
-  recordings.delete(deviceId)
+  if (!active || !targetKey) {
+    throw Object.assign(new Error('Aktif iPhone kaydı bulunamadı'), { code: 'RECORDING_NOT_FOUND' })
+  }
+
   try {
-    active.process.stdin.end()
-  } catch {
-    // Ignore
+    if (active.process.exitCode === null) {
+      active.process.kill('SIGINT')
+    }
+    const timeout = new Promise<void>((resolve) => setTimeout(resolve, 8000))
+    await Promise.race([active.exited, timeout])
+    if (active.process.exitCode === null) {
+      console.warn('[iPhoneRecord] Process did not exit within 8s timeout, sending SIGTERM')
+      active.process.kill('SIGTERM')
+      await new Promise((resolve) => setTimeout(resolve, 1000))
+    }
+    if (!existsSync(active.outPath)) {
+      const errDetail = active.getStderr ? active.getStderr() : ''
+      throw Object.assign(
+        new Error(`iPhone kayıt dosyası oluşmadı: ${errDetail || 'Ekran Kaydı izni gerekli olabilir'}`),
+        { code: 'RECORD_MISSING' }
+      )
+    }
+    return { path: active.outPath }
+  } finally {
+    recordings.delete(targetKey)
   }
-  if (active.process.exitCode === null) {
-    active.process.kill('SIGINT')
-  }
-  const timeout = new Promise<void>((resolve) => setTimeout(resolve, 6000))
-  await Promise.race([active.exited, timeout])
-  if (active.process.exitCode === null) {
-    active.process.kill('SIGTERM')
-  }
-  if (!existsSync(active.outPath)) {
-    throw Object.assign(new Error('Kayıt dosyası oluşmadı (Ekran Kaydı izni gerekli olabilir)'), {
-      code: 'RECORD_MISSING'
-    })
-  }
-  return { path: active.outPath }
 }

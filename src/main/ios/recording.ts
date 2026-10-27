@@ -1,6 +1,7 @@
 import { ChildProcessWithoutNullStreams, spawn } from 'child_process'
 import { existsSync } from 'fs'
-import { makeCapturePath } from '../media/capturePaths'
+import { makeCapturePath, makeTempCapturePath } from '../media/capturePaths'
+import { isDualRecordingActive } from '../media/dualVideo'
 import { iosToolEnv, resolveIdeviceBinary } from './binaries'
 import type { IosFrameHub } from './frameHub'
 
@@ -18,7 +19,15 @@ export function isIosRecording(deviceId: string): boolean {
   return recordings.has(deviceId)
 }
 
-export function startIosRecording(deviceId: string, hub: IosFrameHub): { path: string } {
+export function listIosRecordings(): string[] {
+  return Array.from(recordings.keys())
+}
+
+export function startIosRecording(
+  deviceId: string,
+  hub: IosFrameHub,
+  isDual = false
+): { path: string } {
   if (recordings.has(deviceId)) {
     throw Object.assign(new Error('Bu cihaz için zaten kayıt var'), { code: 'RECORDING_EXISTS' })
   }
@@ -30,7 +39,9 @@ export function startIosRecording(deviceId: string, hub: IosFrameHub): { path: s
     })
   }
 
-  const outPath = makeCapturePath('recording', 'mp4')
+  const outPath = isDual || isDualRecordingActive()
+    ? makeTempCapturePath('recording-ios', 'mp4')
+    : makeCapturePath('recording', 'mp4')
   const child = spawn(
     ffmpeg,
     [

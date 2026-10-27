@@ -12,6 +12,33 @@ export interface MirrorWindowBounds {
   height: number
   owner?: string
   name?: string
+  onScreen?: boolean
+}
+
+export async function isOtherAppFullscreen(): Promise<boolean> {
+  if (process.platform !== 'darwin') {
+    return false
+  }
+
+  const helper = resolveBinary('scryno-winbounds')
+  if (!existsSync(helper) && helper === 'scryno-winbounds') {
+    return false
+  }
+
+  try {
+    const { stdout } = await execFileAsync(helper, ['is-fullscreen'], {
+      timeout: 800,
+      maxBuffer: 64 * 1024
+    })
+    const line = stdout.trim()
+    if (!line || line === '{}') {
+      return false
+    }
+    const parsed = JSON.parse(line) as { fullscreen?: boolean }
+    return parsed.fullscreen === true
+  } catch {
+    return false
+  }
 }
 
 export async function findMirrorWindowBounds(deviceId: string): Promise<MirrorWindowBounds | null> {
@@ -48,7 +75,8 @@ export async function findMirrorWindowBounds(deviceId: string): Promise<MirrorWi
       width: parsed.width,
       height: parsed.height,
       owner: parsed.owner,
-      name: parsed.name
+      name: parsed.name,
+      onScreen: parsed.onScreen
     }
   } catch {
     return null
@@ -81,7 +109,8 @@ function parseBounds(stdout: string): MirrorWindowBounds | null {
       width: parsed.width,
       height: parsed.height,
       owner: parsed.owner,
-      name: parsed.name
+      name: parsed.name,
+      onScreen: parsed.onScreen
     }
   } catch {
     return null

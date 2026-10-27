@@ -47,51 +47,32 @@ function OverlayApp(): JSX.Element {
     }
   }, [])
 
+  const handleClose = useCallback(() => {
+    overlayRef.current?.clear()
+    window.scryno.setIgnoreMouseEvents(false)
+    void window.scryno.toggleOverlay(deviceId)
+  }, [deviceId])
+
   const takeSnapshot = useCallback(async () => {
     if (!deviceId) {
       return
     }
     try {
-      const baseShot = await window.scryno.takeScreenshot(deviceId, 'ios')
-      if (!baseShot.ok) {
-        return
-      }
-
-      const shapes = overlayRef.current?.getShapes() ?? []
-      if (shapes.length === 0) {
-        return
-      }
-
-      const img = new Image()
-      img.src = `file://${baseShot.path}?t=${Date.now()}`
-      await new Promise<void>((resolve, reject) => {
-        img.onload = () => resolve()
-        img.onerror = () => reject(new Error('Görüntü yüklenemedi'))
-      })
-
-      const off = document.createElement('canvas')
-      off.width = img.naturalWidth
-      off.height = img.naturalHeight
-      const ctx = off.getContext('2d')
-      if (ctx) {
-        ctx.drawImage(img, 0, 0)
-        renderAnnotationShapes(ctx, shapes, off.width, off.height)
-        const blob = await new Promise<Blob | null>((resolve) => off.toBlob(resolve, 'image/png'))
-        if (blob) {
-          const buffer = new Uint8Array(await blob.arrayBuffer())
-          await window.scryno.saveScreenshotData(buffer, deviceId)
-          overlayRef.current?.clear()
-        }
-      }
+      await window.scryno.takeScreenshot(deviceId, 'ios')
     } catch {
       // Ignore
     }
   }, [deviceId])
 
+  const wasRecordingRef = useRef<boolean | null>(null)
+
   useEffect(() => {
     return window.scryno.onToolbarStatus((payload) => {
-      if (!payload.recording) {
-        overlayRef.current?.clear()
+      if (typeof payload.recording === 'boolean') {
+        if (wasRecordingRef.current === true && !payload.recording) {
+          overlayRef.current?.clear()
+        }
+        wasRecordingRef.current = payload.recording
       }
       if (
         payload.kind === 'ok' &&
@@ -101,12 +82,6 @@ function OverlayApp(): JSX.Element {
       }
     })
   }, [])
-
-  const handleClose = useCallback(() => {
-    overlayRef.current?.clear()
-    window.scryno.setIgnoreMouseEvents(false)
-    void window.scryno.toggleOverlay(deviceId)
-  }, [deviceId])
 
   // Keyboard shortcuts
   useEffect(() => {

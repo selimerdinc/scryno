@@ -19,29 +19,36 @@ const SCRCPY_VERSION = '3.2'
 const PLATFORM_TOOLS_VERSION = '36.0.0'
 const GO_IOS_VERSION = '1.3.2'
 const GO_IOS_MAC_URL = `https://github.com/danielpaulus/go-ios/releases/download/v${GO_IOS_VERSION}/go-ios-mac.zip`
+const FFMPEG_VERSION = '9.0.2'
 
 const targets = [
   {
     id: 'mac-arm64',
     scrcpyUrl: `https://github.com/Genymobile/scrcpy/releases/download/v${SCRCPY_VERSION}/scrcpy-macos-aarch64-v${SCRCPY_VERSION}.tar.gz`,
     platformToolsUrl: `https://dl.google.com/android/repository/platform-tools_r${PLATFORM_TOOLS_VERSION}-darwin.zip`,
+    ffmpegUrl: `https://github.com/Tyrrrz/FFmpegBin/releases/download/${FFMPEG_VERSION}/ffmpeg-osx-arm64.zip`,
     scrcpyName: 'scrcpy',
-    adbName: 'adb'
+    adbName: 'adb',
+    ffmpegName: 'ffmpeg'
   },
   {
     id: 'mac-x64',
     scrcpyUrl: `https://github.com/Genymobile/scrcpy/releases/download/v${SCRCPY_VERSION}/scrcpy-macos-x86_64-v${SCRCPY_VERSION}.tar.gz`,
     platformToolsUrl: `https://dl.google.com/android/repository/platform-tools_r${PLATFORM_TOOLS_VERSION}-darwin.zip`,
+    ffmpegUrl: `https://github.com/Tyrrrz/FFmpegBin/releases/download/${FFMPEG_VERSION}/ffmpeg-osx-x64.zip`,
     scrcpyName: 'scrcpy',
-    adbName: 'adb'
+    adbName: 'adb',
+    ffmpegName: 'ffmpeg'
   },
   {
     id: 'win-x64',
     // Official scrcpy Windows zip already ships adb.exe.
     scrcpyUrl: `https://github.com/Genymobile/scrcpy/releases/download/v${SCRCPY_VERSION}/scrcpy-win64-v${SCRCPY_VERSION}.zip`,
     platformToolsUrl: null,
+    ffmpegUrl: `https://github.com/Tyrrrz/FFmpegBin/releases/download/${FFMPEG_VERSION}/ffmpeg-windows-x64.zip`,
     scrcpyName: 'scrcpy.exe',
-    adbName: 'adb.exe'
+    adbName: 'adb.exe',
+    ffmpegName: 'ffmpeg.exe'
   }
 ]
 
@@ -127,6 +134,14 @@ async function fetchTarget(target) {
       extractArchive(goIosArchive, goIosOut)
     }
 
+    let ffmpegOut = null
+    if (target.ffmpegUrl) {
+      const ffmpegArchive = join(tmp, 'ffmpeg.zip')
+      ffmpegOut = join(tmp, 'ffmpeg')
+      await download(target.ffmpegUrl, ffmpegArchive)
+      extractArchive(ffmpegArchive, ffmpegOut)
+    }
+
     // Fresh dest
     rmSync(destDir, { recursive: true, force: true })
     mkdirSync(destDir, { recursive: true })
@@ -146,6 +161,14 @@ async function fetchTarget(target) {
       const goIosSrc = findFile(goIosOut, 'ios')
       copyFileSync(goIosSrc, join(destDir, 'go-ios'))
       chmodSync(join(destDir, 'go-ios'), 0o755)
+    }
+
+    if (ffmpegOut && target.ffmpegName) {
+      const ffmpegSrc = findFile(ffmpegOut, target.ffmpegName)
+      copyFileSync(ffmpegSrc, join(destDir, target.ffmpegName))
+      if (!target.ffmpegName.endsWith('.exe')) {
+        chmodSync(join(destDir, target.ffmpegName), 0o755)
+      }
     }
 
     if (!target.adbName.endsWith('.exe')) {
@@ -176,7 +199,7 @@ async function fetchTarget(target) {
 }
 
 function compileWinbounds(destDir) {
-  for (const name of ['scryno-winbounds', 'scryno-wincapture', 'scryno-ioscapture', 'scryno-chrome']) {
+  for (const name of ['scryno-winbounds', 'scryno-wincapture', 'scryno-ioscapture', 'scryno-chrome', 'scryno-dualvideo']) {
     const source = join(root, 'scripts', `${name}.swift`)
     if (!existsSync(source)) {
       console.warn(`  skip ${name} (source missing)`)

@@ -41,6 +41,18 @@ export function resolveBinary(name: string): string {
     return candidate
   }
 
+  // Check well-known system locations on macOS/Linux
+  const fallbacks = [
+    join('/opt/homebrew/bin', fileName),
+    join('/usr/local/bin', fileName),
+    join('/usr/bin', fileName)
+  ]
+  for (const fb of fallbacks) {
+    if (existsSync(fb)) {
+      return fb
+    }
+  }
+
   // Dev fallback: system PATH (useful before fetch-binaries runs).
   return name
 }

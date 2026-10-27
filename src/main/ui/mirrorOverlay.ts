@@ -21,6 +21,24 @@ function overlayUrl(deviceId: string, label: string): string {
   return `file://${join(__dirname, '../renderer/overlay.html')}?${query}`
 }
 
+export function isMirrorOverlayOpen(deviceId?: string): boolean {
+  if (deviceId && overlays.has(deviceId)) {
+    return true
+  }
+  return overlays.size > 0
+}
+
+export async function openMirrorOverlay(
+  deviceId: string,
+  needle = '@iphone-mirroring',
+  label = 'iPhone'
+): Promise<{ ok: boolean; open: boolean }> {
+  if (isMirrorOverlayOpen(deviceId)) {
+    return { ok: true, open: true }
+  }
+  return toggleMirrorOverlay(deviceId, needle, label)
+}
+
 export function closeMirrorOverlay(deviceId: string): void {
   const session = overlays.get(deviceId)
   if (!session) {
@@ -57,6 +75,7 @@ export async function toggleMirrorOverlay(
   }
 
   const win = new BrowserWindow({
+    title: 'Scryno Mirror Overlay',
     x: Math.round(bounds.x),
     y: Math.round(bounds.y),
     width: Math.round(bounds.width),
@@ -89,9 +108,21 @@ export async function toggleMirrorOverlay(
       return
     }
     const current = await findMirrorWindowBounds(needle)
+    if (win.isDestroyed()) {
+      closeMirrorOverlay(deviceId)
+      return
+    }
     if (!current) {
       closeMirrorOverlay(deviceId)
       return
+    }
+    if (current.onScreen === false) {
+      if (win.isVisible()) {
+        win.hide()
+      }
+      return
+    } else if (!win.isVisible()) {
+      win.showInactive()
     }
     const winBounds = win.getBounds()
     const target = {

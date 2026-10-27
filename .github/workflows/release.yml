@@ -31,6 +31,9 @@ jobs:
       - name: Bağımlılıkları kur
         run: npm ci
 
+      - name: Tip kontrolü
+        run: npm run typecheck
+
       - name: Sürüm numarasını hazırla
         id: version
         shell: bash

@@ -6,7 +6,8 @@ import { connect, type Socket } from 'net'
 import { join } from 'path'
 import { promisify } from 'util'
 import type { MirrorInput, MirrorOptions, MirrorSessionInfo } from '../../shared/types'
-import { makeCapturePath } from '../media/capturePaths'
+import { makeCapturePath, makeTempCapturePath } from '../media/capturePaths'
+import { isDualRecordingActive } from '../media/dualVideo'
 import { getBinRoot, resolveBinary } from '../paths'
 
 const execFileAsync = promisify(execFile)
@@ -30,6 +31,13 @@ const CONTROL_START_APP = 16
 const DEVICE_MESSAGE_CLIPBOARD = 0
 const DEVICE_MESSAGE_ACK_CLIPBOARD = 1
 const DEVICE_MESSAGE_UHID_OUTPUT = 2
+
+type MirrorFocusHandler = (deviceId: string) => void
+let focusHandler: MirrorFocusHandler | null = null
+
+export function setMirrorFocusHandler(handler: MirrorFocusHandler): void {
+  focusHandler = handler
+}
 
 class StreamReader {
   private chunks: Buffer[] = []
@@ -100,6 +108,7 @@ interface ActiveSession {
   } | null
   startStreaming: (() => void) | null
   closing: boolean
+  isDual?: boolean
 }
 
 const sessions = new Map<string, ActiveSession>()
@@ -438,14 +447,32 @@ function registerMirrorIpc(): void {
     }
     session.pendingRecording = null
     try {
-      const path = makeCapturePath('recording', extension === 'mp4' ? 'mp4' : 'webm')
+      const isDual = session.isDual || isDualRecordingActive()
+      const path = isDual
+        ? makeTempCapturePath('recording-android', extension === 'mp4' ? 'mp4' : 'webm')
+        : makeCapturePath('recording', extension === 'mp4' ? 'mp4' : 'webm')
       await writeFile(path, Buffer.from(data))
       pending.resolve(path)
       return { ok: true as const }
     } catch (error) {
       pending.reject(error as Error)
       return { ok: false as const }
+    } finally {
+      session.isDual = false
     }
+  })
+
+  ipcMain.handle('android-mirror:toggle-annotations', (_event, deviceId?: string) => {
+    const win = (deviceId ? getMirrorWindow(deviceId) : null) || Array.from(sessions.values())[0]?.window
+    if (win && !win.isDestroyed()) {
+      win.webContents.send('android-mirror:toggle-annotations')
+      return { ok: true }
+    }
+    return { ok: false }
+  })
+
+  ipcMain.handle('android-mirror:set-annotations', (_event, deviceId: string | undefined, open: boolean) => {
+    return setAndroidAnnotations(deviceId, open)
   })
 }
 
@@ -684,6 +711,10 @@ export async function startScrcpySession(
   session.window = win
   sessions.set(deviceId, session)
 
+  win.on('focus', () => {
+    focusHandler?.(deviceId)
+  })
+
   win.on('close', (event) => {
     if (session.recording && !session.closing) {
       event.preventDefault()
@@ -732,7 +763,7 @@ export function isMirrorRecording(deviceId: string): boolean {
   return sessions.get(deviceId)?.recording ?? false
 }
 
-export function startMirrorRecording(deviceId: string): void {
+export function startMirrorRecording(deviceId: string, isDual = false): void {
   const session = sessions.get(deviceId)
   if (!session?.window || session.window.isDestroyed()) {
     throw Object.assign(new Error('Aktif yansıtma yok'), {
@@ -745,6 +776,7 @@ export function startMirrorRecording(deviceId: string): void {
     })
   }
   session.recording = true
+  session.isDual = isDual || isDualRecordingActive()
   session.window.webContents.send('android-mirror:record', 'start')
 }
 
@@ -799,12 +831,61 @@ export function getMirrorWindow(deviceId: string): BrowserWindow | null {
   return win && !win.isDestroyed() ? win : null
 }
 
+export async function captureAndroidMirrorScreenshot(deviceId?: string): Promise<Buffer | null> {
+  let win = deviceId ? getMirrorWindow(deviceId) : null
+  if (!win || win.isDestroyed()) {
+    win = Array.from(sessions.values())[0]?.window ?? null
+  }
+  if (!win || win.isDestroyed()) {
+    return null
+  }
+  try {
+    const dataUrl: string | null = await win.webContents.executeJavaScript(
+      'window.__captureAndroidSnapshot ? window.__captureAndroidSnapshot() : null'
+    )
+    if (dataUrl && dataUrl.startsWith('data:image/png;base64,')) {
+      return Buffer.from(dataUrl.slice('data:image/png;base64,'.length), 'base64')
+    }
+  } catch (e) {
+    console.warn('[AndroidMirror] captureAndroidMirrorScreenshot failed:', e)
+  }
+  return null
+}
+
+export async function isAndroidAnnotationsOpen(deviceId?: string): Promise<boolean> {
+  let win = deviceId ? getMirrorWindow(deviceId) : null
+  if (!win || win.isDestroyed()) {
+    win = Array.from(sessions.values())[0]?.window ?? null
+  }
+  if (!win || win.isDestroyed()) {
+    return false
+  }
+  try {
+    const isOpen: boolean = await win.webContents.executeJavaScript(
+      'Boolean(window.__isAndroidAnnotationsOpen && window.__isAndroidAnnotationsOpen())'
+    )
+    return Boolean(isOpen)
+  } catch {
+    return false
+  }
+}
+
+export async function setAndroidAnnotations(deviceId: string | undefined, open: boolean): Promise<boolean> {
+  let win = deviceId ? getMirrorWindow(deviceId) : null
+  if (!win || win.isDestroyed()) {
+    win = Array.from(sessions.values())[0]?.window ?? null
+  }
+  if (!win || win.isDestroyed()) {
+    return false
+  }
+  win.webContents.send('android-mirror:set-annotations', { open })
+  return true
+}
+
 export function stopScrcpySession(deviceId: string): void {
   const session = sessions.get(deviceId)
   if (!session) {
-    throw Object.assign(new Error(`Aktif yansıtma oturumu yok: ${deviceId}`), {
-      code: 'SESSION_NOT_FOUND'
-    })
+    return
   }
   teardown(deviceId, session, 'durduruldu')
 }

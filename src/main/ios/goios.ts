@@ -1,4 +1,5 @@
-import { ChildProcessWithoutNullStreams, spawn, execFile } from 'child_process'
+import { type ChildProcessByStdio, spawn, execFile } from 'child_process'
+import type { Readable } from 'stream'
 import { existsSync } from 'fs'
 import { promisify } from 'util'
 import { resolveBinary } from '../paths'
@@ -12,7 +13,9 @@ export interface IosTunnelInfo {
   udid: string
 }
 
-let tunnelProcess: ChildProcessWithoutNullStreams | null = null
+type PipedChild = ChildProcessByStdio<null, Readable, Readable>
+
+let tunnelProcess: PipedChild | null = null
 let tunnelReady: Promise<void> | null = null
 
 function goIosPath(): string {
@@ -203,7 +206,7 @@ export function spawnIosStream(
   udid: string,
   tunnel: IosTunnelInfo,
   port: number
-): ChildProcessWithoutNullStreams {
+): PipedChild {
   const bin = goIosPath()
   return spawn(
     bin,

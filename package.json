@@ -10,6 +10,7 @@
   "scripts": {
     "dev": "env -u ELECTRON_RUN_AS_NODE node scripts/dev.mjs",
     "build": "electron-vite build",
+    "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json",
     "preview": "env -u ELECTRON_RUN_AS_NODE electron-vite preview",
     "fetch-binaries": "node scripts/fetch-binaries.mjs",
     "brand": "node scripts/brand.mjs",

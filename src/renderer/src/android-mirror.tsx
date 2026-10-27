@@ -293,29 +293,52 @@ function AndroidMirrorApp(): JSX.Element {
     let latestFrame: VideoFrame | null = null
     let rafId: number | null = null
     let destroyed = false
+    const cleanCanvas = document.createElement('canvas')
+    const cleanCtx = cleanCanvas.getContext('2d')
+    let hasCleanFrame = false
+    let lastShapesCount = 0
 
     const renderLoop = (): void => {
       if (destroyed) {
         return
       }
       rafId = requestAnimationFrame(renderLoop)
+
       if (!latestFrame) {
+        const shapes = shapesRef.current
+        const activeShape = overlayRef.current?.getActiveShape()
+        const allShapes = activeShape ? [...shapes, activeShape] : shapes
+        if (hasCleanFrame && (allShapes.length > 0 || lastShapesCount > 0 || laserModeRef.current)) {
+          context.drawImage(cleanCanvas, 0, 0)
+          if (allShapes.length > 0) {
+            renderAnnotationShapes(context, allShapes, canvas.width, canvas.height, {
+              fadeDuration: laserModeRef.current ? 3000 : 0
+            })
+          }
+          lastShapesCount = allShapes.length
+        }
         return
       }
+
       const frame = latestFrame
       latestFrame = null
 
       if (canvas.width !== frame.displayWidth || canvas.height !== frame.displayHeight) {
         canvas.width = frame.displayWidth
         canvas.height = frame.displayHeight
+        cleanCanvas.width = frame.displayWidth
+        cleanCanvas.height = frame.displayHeight
         const rotated = videoSize.current.width > 0
         videoSize.current = { width: frame.displayWidth, height: frame.displayHeight }
         if (rotated) {
           window.scryno.androidMirror.reportSize(frame.displayWidth, frame.displayHeight)
         }
       }
-      context.drawImage(frame, 0, 0)
+      cleanCtx?.drawImage(frame, 0, 0)
+      hasCleanFrame = true
       frame.close()
+
+      context.drawImage(cleanCanvas, 0, 0)
       const shapes = shapesRef.current
       const activeShape = overlayRef.current?.getActiveShape()
       const allShapes = activeShape ? [...shapes, activeShape] : shapes
@@ -324,6 +347,7 @@ function AndroidMirrorApp(): JSX.Element {
           fadeDuration: laserModeRef.current ? 3000 : 0
         })
       }
+      lastShapesCount = allShapes.length
       setReady(true)
     }
     rafId = requestAnimationFrame(renderLoop)
@@ -463,7 +487,7 @@ function AndroidMirrorApp(): JSX.Element {
     if (liveRecorder?.state === 'recording') {
       setRecording(true)
     }
-    return window.scryno.androidMirror.onRecord((action) => {
+    const offRecord = window.scryno.androidMirror.onRecord((action) => {
       const canvas = canvasRef.current
       if (action === 'start' && canvas) {
         beginMirrorRecording(canvas, audioOutput.current?.stream.getAudioTracks() ?? [])
@@ -472,14 +496,33 @@ function AndroidMirrorApp(): JSX.Element {
         endMirrorRecording()
         setRecording(false)
         overlayRef.current?.clear()
+        setShowAnnotationBar(false)
       }
     })
+
+    const offAnnotations = window.scryno.androidMirror.onToggleAnnotations?.(() => {
+      setShowAnnotationBar((prev) => !prev)
+    })
+
+    const offSetAnnotations = window.scryno.androidMirror.onSetAnnotations?.((payload: { open: boolean }) => {
+      setShowAnnotationBar(payload.open)
+      if (!payload.open) {
+        overlayRef.current?.clear()
+      }
+    })
+
+    return () => {
+      offRecord()
+      offAnnotations?.()
+      offSetAnnotations?.()
+    }
   }, [])
 
   useEffect(() => {
     return window.scryno.onToolbarStatus((payload) => {
       if (!payload.recording) {
         overlayRef.current?.clear()
+        setShowAnnotationBar(false)
       }
       if (
         payload.kind === 'ok' &&
@@ -675,38 +718,62 @@ function AndroidMirrorApp(): JSX.Element {
     }
   }
 
+  const getSnapshotDataUrl = useCallback((): string | null => {
+    const canvas = canvasRef.current
+    if (!canvas || canvas.width === 0 || canvas.height === 0) {
+      return null
+    }
+    const off = document.createElement('canvas')
+    off.width = canvas.width
+    off.height = canvas.height
+    const offCtx = off.getContext('2d')
+    if (!offCtx) {
+      return null
+    }
+    offCtx.drawImage(canvas, 0, 0)
+    const shapes = overlayRef.current?.getShapes() ?? []
+    const activeShape = overlayRef.current?.getActiveShape()
+    const allShapes = activeShape ? [...shapes, activeShape] : shapes
+    if (allShapes.length > 0) {
+      renderAnnotationShapes(offCtx, allShapes, off.width, off.height)
+    }
+    return off.toDataURL('image/png')
+  }, [])
+
+  useEffect(() => {
+    ;(window as unknown as { __captureAndroidSnapshot?: () => string | null }).__captureAndroidSnapshot = getSnapshotDataUrl
+    ;(window as unknown as { __isAndroidAnnotationsOpen?: () => boolean }).__isAndroidAnnotationsOpen = () => showAnnotationBar
+    return () => {
+      delete (window as unknown as { __captureAndroidSnapshot?: () => string | null }).__captureAndroidSnapshot
+      delete (window as unknown as { __isAndroidAnnotationsOpen?: () => boolean }).__isAndroidAnnotationsOpen
+    }
+  }, [getSnapshotDataUrl, showAnnotationBar])
+
+  useEffect(() => {
+    if (!showAnnotationBar) {
+      overlayRef.current?.clear()
+    }
+  }, [showAnnotationBar])
+
   const takeShot = useCallback(async () => {
     setBusy(true)
     try {
-      const canvas = canvasRef.current
-      const shapes = overlayRef.current?.getShapes() ?? []
-      const activeShape = overlayRef.current?.getActiveShape()
-      const allShapes = activeShape ? [...shapes, activeShape] : shapes
-
-      if (canvas && canvas.width > 0 && canvas.height > 0) {
-        const off = document.createElement('canvas')
-        off.width = canvas.width
-        off.height = canvas.height
-        const offCtx = off.getContext('2d')
-        if (offCtx) {
-          offCtx.drawImage(canvas, 0, 0)
-          if (allShapes.length > 0) {
-            renderAnnotationShapes(offCtx, allShapes, off.width, off.height)
-          }
-          const blob = await new Promise<Blob | null>((resolve) =>
-            off.toBlob(resolve, 'image/png')
-          )
-          if (blob) {
-            const buffer = new Uint8Array(await blob.arrayBuffer())
-            const result = await window.scryno.saveScreenshotData(buffer, deviceId)
-            if (result.ok) {
-              setFlash(true)
-              window.setTimeout(() => setFlash(false), 500)
-              showNotice('Ekran görüntüsü kaydedildi ve panoya kopyalandı')
-              overlayRef.current?.clear()
-              return
-            }
-          }
+      const dataUrl = getSnapshotDataUrl()
+      if (dataUrl && dataUrl.startsWith('data:image/png;base64,')) {
+        const base64Data = dataUrl.slice('data:image/png;base64,'.length)
+        const binaryStr = window.atob(base64Data)
+        const buffer = new Uint8Array(binaryStr.length)
+        for (let i = 0; i < binaryStr.length; i++) {
+          buffer[i] = binaryStr.charCodeAt(i)
+        }
+        const result = await window.scryno.saveScreenshotData(buffer, deviceId)
+        if (result.ok) {
+          setFlash(true)
+          window.setTimeout(() => setFlash(false), 500)
+          showNotice('Ekran görüntüsü kaydedildi ve panoya kopyalandı')
+          overlayRef.current?.clear()
+          setShowAnnotationBar(false)
+          return
         }
       }
 
@@ -716,6 +783,7 @@ function AndroidMirrorApp(): JSX.Element {
         window.setTimeout(() => setFlash(false), 500)
         showNotice('Ekran görüntüsü kaydedildi ve panoya kopyalandı')
         overlayRef.current?.clear()
+        setShowAnnotationBar(false)
       } else {
         showNotice(result.message)
       }
@@ -730,6 +798,7 @@ function AndroidMirrorApp(): JSX.Element {
       if (recording) {
         const result = await window.scryno.stopRecording(deviceId)
         overlayRef.current?.clear()
+        setShowAnnotationBar(false)
         if (result.ok) {
           void window.scryno.revealCapture(result.path)
         } else {
@@ -742,6 +811,7 @@ function AndroidMirrorApp(): JSX.Element {
         } else if (result.stopped) {
           setRecording(false)
           overlayRef.current?.clear()
+          setShowAnnotationBar(false)
           void window.scryno.revealCapture(result.path)
         }
       }

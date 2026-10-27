@@ -3,10 +3,12 @@ import { DeviceCard } from './components/DeviceCard'
 import { Drawer } from './components/Drawer'
 import { IosControls, type IosOptions } from './components/IosControls'
 import { IosGuide } from './components/IosGuide'
+import { DualStudio } from './components/DualStudio'
 import { PlatformSection } from './components/PlatformSection'
 import { QualityControl } from './components/QualityControl'
 import { WirelessPanel } from './components/WirelessPanel'
 import { IconFolder, IconRefresh, IconShield, IconWifi } from './components/icons'
+import { compositeDualScreenshot } from './utils/dualCompositor'
 import type { DeviceInfo, MirrorOptions, MirrorSessionInfo } from '../../shared/types'
 import logoUrl from './assets/logo.png'
 
@@ -107,6 +109,7 @@ export default function App(): JSX.Element {
   const toastSeq = useRef(0)
   const [options, setOptions] = useState<MirrorOptions>(loadMirrorOptions)
   const [iosOptions, setIosOptions] = useState<IosOptions>(loadIosOptions)
+  const [dualRecording, setDualRecording] = useState(false)
 
   const notify = useCallback((kind: ToastKind, text: string) => {
     toastSeq.current += 1
@@ -129,6 +132,22 @@ export default function App(): JSX.Element {
   )
 
   const iosDevices = useMemo(() => devices.filter((device) => device.platform === 'ios'), [devices])
+
+  const primaryAndroid = useMemo(
+    () =>
+      androidDevices.find((device) => sessionsById.has(device.id)) ??
+      androidDevices.find((device) => device.state === 'device') ??
+      null,
+    [androidDevices, sessionsById]
+  )
+
+  const primaryIos = useMemo(
+    () =>
+      iosDevices.find((device) => sessionsById.has(device.id)) ??
+      iosDevices.find((device) => device.state === 'device') ??
+      null,
+    [iosDevices, sessionsById]
+  )
 
   const firstUsbAndroidId = useMemo(
     () =>
@@ -244,6 +263,90 @@ export default function App(): JSX.Element {
     },
     [notify]
   )
+
+  const takeDualScreenshot = useCallback(
+    async (mode: 'mockup' | 'raw') => {
+      if (!primaryAndroid || !primaryIos) {
+        notify('error', 'Her iki platformdan da hazır bir cihaz gereklidir.')
+        return
+      }
+      setBusy(true)
+      try {
+        notify('info', 'Her iki cihazdan anlık görüntü alınıyor…')
+        const sources = await window.scryno.captureDualSources(
+          primaryAndroid.id,
+          primaryIos.id,
+          primaryAndroid.name || 'Android',
+          primaryIos.name || 'iPhone'
+        )
+        if (!sources.ok) {
+          notify('error', sources.message)
+          return
+        }
+        notify('info', 'Görseller yan yana birleştiriliyor…')
+        const compositedBuffer = await compositeDualScreenshot({
+          androidImageSrc: sources.androidImage,
+          iosImageSrc: sources.iosImage,
+          androidLabel: sources.androidName,
+          iosLabel: sources.iosName,
+          mode
+        })
+
+        const saveResult = await window.scryno.saveDualScreenshot(compositedBuffer)
+        if (!saveResult.ok) {
+          notify('error', saveResult.message)
+          return
+        }
+        notify('ok', saveResult.message)
+        if (saveResult.path) {
+          await window.scryno.revealCapture(saveResult.path)
+        }
+      } catch (error) {
+        notify('error', (error as Error).message || 'Yan yana ekran görüntüsü oluşturulamadı')
+      } finally {
+        setBusy(false)
+      }
+    },
+    [primaryAndroid, primaryIos, notify]
+  )
+
+  const toggleDualRecord = useCallback(async () => {
+    if (!primaryAndroid || !primaryIos) {
+      notify('error', 'Kayıt için her iki platformdan da hazır bir cihaz gereklidir.')
+      return
+    }
+
+    setBusy(true)
+    try {
+      if (dualRecording) {
+        notify('info', 'Video kayıtları tamamlanıyor ve yan yana tek video olarak birleştiriliyor…')
+        const result = await window.scryno.stopDualRecording(primaryAndroid.id, primaryIos.id)
+        setDualRecording(false)
+
+        if (result.ok) {
+          notify('ok', 'Yan yana tek video İndirilenler/Scryno klasörüne kaydedildi!')
+          if (result.path) {
+            await window.scryno.revealCapture(result.path)
+          }
+        } else {
+          notify('error', result.message || 'Video birleştirilirken bir hata oluştu.')
+        }
+      } else {
+        const result = await window.scryno.startDualRecording(primaryAndroid.id, primaryIos.id)
+        if (!result.ok) {
+          notify('error', `Kayıt başlatılamadı: ${result.message}`)
+          return
+        }
+
+        setDualRecording(true)
+        notify('info', 'Yan yana tek video kaydı başladı (Android + iPhone)')
+      }
+    } catch (error) {
+      notify('error', (error as Error).message || 'Video kaydı işleminde hata oluştu')
+    } finally {
+      setBusy(false)
+    }
+  }, [dualRecording, primaryAndroid, primaryIos, notify])
 
   const wirelessConnect = useCallback(
     async (endpoint: string) => {
@@ -398,6 +501,7 @@ export default function App(): JSX.Element {
           </div>
         ) : (
           <>
+
             <PlatformSection
               platform="android"
               title="Android"

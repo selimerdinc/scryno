@@ -3,7 +3,7 @@ import { createServer } from 'net'
 import { join } from 'path'
 import type { MirrorSessionInfo } from '../../shared/types'
 import { startIosFrameHub, type IosFrameHub } from './frameHub'
-import { findMirrorWindowBounds } from '../ui/mirrorWindowBounds'
+import { findMirrorWindowBounds, isOtherAppFullscreen } from '../ui/mirrorWindowBounds'
 import { closeMirrorToolbar, showMirrorToolbar } from '../ui/mirrorToolbar'
 import { spawnIosStream, stopIosTunnel, tunnelForDevice } from './goios'
 import { IPHONE_MIRRORING_NEEDLE, openIphoneMirroring, quitIphoneMirroring } from './iphoneMirroring'
@@ -285,12 +285,18 @@ async function restoreMissingIphoneWindows(): Promise<void> {
   }
   autoRestoreBusy = true
   try {
+    if (await isOtherAppFullscreen()) {
+      return
+    }
     for (const [deviceId, label] of autoRestoreLabels) {
       if (!isIphoneMirroringSession(deviceId)) {
         continue
       }
       const bounds = await findMirrorWindowBounds(IPHONE_MIRRORING_NEEDLE)
       if (!isIphoneMirroringSession(deviceId) || bounds) {
+        continue
+      }
+      if (await isOtherAppFullscreen()) {
         continue
       }
       await restoreIosMirror(deviceId, label)

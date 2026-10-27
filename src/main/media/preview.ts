@@ -5,6 +5,8 @@ import { tmpdir } from 'os'
 import { join } from 'path'
 import { promisify } from 'util'
 import { getIosFrameHub, isIphoneMirroringSession } from '../ios/mirror'
+import { isIphoneMirroringRecording } from '../ios/iphoneMirroring'
+import { isDualRecordingActive } from './dualVideo'
 import { resolveBinary } from '../paths'
 import type { DevicePlatform } from '../../shared/types'
 
@@ -81,6 +83,11 @@ async function captureOnce(deviceId: string, platform: DevicePlatform): Promise<
     // A developer screenshot makes the iPhone play the shutter. Only capture the
     // Mac-side iPhone Mirroring window, which is silent.
     if (!isIphoneMirroringSession(deviceId)) {
+      return null
+    }
+    // Never run scryno-wincapture shot while an active recording is in progress,
+    // as concurrent ScreenCaptureKit requests interrupt the ongoing recording stream.
+    if (isIphoneMirroringRecording(deviceId) || isDualRecordingActive()) {
       return null
     }
     return toPreview(await captureWindowPng(deviceId))

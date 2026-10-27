@@ -184,3 +184,12 @@ export function IconCheck(props: IconProps): JSX.Element {
   )
 }
 
+export function IconVideo({ size = 18, live = false }: IconProps & { live?: boolean }): JSX.Element {
+  return (
+    <Svg size={size}>
+      <rect x="2" y="5" width="13" height="14" rx="2" fill={live ? 'currentColor' : 'none'} />
+      <polygon points="17 9 22 6 22 18 17 15 17 9" fill={live ? 'currentColor' : 'none'} />
+    </Svg>
+  )
+}
+

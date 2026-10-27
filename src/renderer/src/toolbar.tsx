@@ -1,6 +1,8 @@
 import { StrictMode, useCallback, useEffect, useMemo, useState, type JSX } from 'react'
 import { createRoot } from 'react-dom/client'
 import './toolbar.css'
+import { IconClose, IconFolder, IconRefresh, IconSparkle } from './components/icons'
+import { compositeDualScreenshot } from './utils/dualCompositor'
 
 function readParams(): { deviceId: string; label: string; platform: 'android' | 'ios' } {
   const params = new URLSearchParams(window.location.search)
@@ -135,6 +137,9 @@ function ToolbarApp(): JSX.Element {
       if (result.ok) {
         setFlash(true)
         window.setTimeout(() => setFlash(false), 500)
+        if (platform === 'android') {
+          void window.scryno.setAndroidAnnotations(deviceId, false)
+        }
       }
     } finally {
       setBusy(false)
@@ -153,6 +158,9 @@ function ToolbarApp(): JSX.Element {
           return
         }
         setRecording(false)
+        if (platform === 'android') {
+          void window.scryno.setAndroidAnnotations(deviceId, false)
+        }
         await window.scryno.revealCapture(result.path)
       } else {
         const result = await window.scryno.startRecording(deviceId)
@@ -161,6 +169,9 @@ function ToolbarApp(): JSX.Element {
         }
         if (result.stopped) {
           setRecording(false)
+          if (platform === 'android') {
+            void window.scryno.setAndroidAnnotations(deviceId, false)
+          }
           await window.scryno.revealCapture(result.path)
         } else {
           setRecording(true)
@@ -169,7 +180,7 @@ function ToolbarApp(): JSX.Element {
     } finally {
       setBusy(false)
     }
-  }, [deviceId, recording])
+  }, [deviceId, recording, platform])
 
   const openCaptures = useCallback(async () => {
     await window.scryno.openCaptureDir()
@@ -205,7 +216,13 @@ function ToolbarApp(): JSX.Element {
           disabled={busy || !deviceId}
           title="Çizim yap / Vurgula"
           aria-label="Çizim yap"
-          onClick={() => void window.scryno.toggleOverlay(deviceId)}
+          onClick={() => {
+            if (platform === 'android') {
+              void window.scryno.toggleAndroidAnnotations(deviceId)
+            } else {
+              void window.scryno.toggleOverlay(deviceId)
+            }
+          }}
         >
           <IconPencil />
         </button>
@@ -238,11 +255,219 @@ function ToolbarApp(): JSX.Element {
   )
 }
 
+function DualToolbarApp(): JSX.Element {
+  const params = new URLSearchParams(window.location.search)
+  const androidId = params.get('androidId') || ''
+  const iosId = params.get('iosId') || ''
+
+  const [busy, setBusy] = useState(false)
+  const [recording, setRecording] = useState(false)
+  const [seconds, setSeconds] = useState(0)
+  const [flash, setFlash] = useState(false)
+  const [flashErr, setFlashErr] = useState(false)
+  const [merging, setMerging] = useState(false)
+
+  useEffect(() => {
+    return window.scryno.onToolbarStatus((payload) => {
+      setRecording(payload.recording)
+      if (payload.kind === 'ok') {
+        setFlash(true)
+        setTimeout(() => setFlash(false), 500)
+      } else if (payload.kind === 'error') {
+        setFlashErr(true)
+        setTimeout(() => setFlashErr(false), 800)
+      }
+    })
+  }, [])
+
+  useEffect(() => {
+    let timer: number | undefined
+    if (recording && !merging) {
+      timer = window.setInterval(() => setSeconds((s) => s + 1), 1000)
+    } else {
+      setSeconds(0)
+    }
+    return () => {
+      if (timer) clearInterval(timer)
+    }
+  }, [recording, merging])
+
+  const runDualScreenshot = useCallback(async () => {
+    if (busy) return
+    setBusy(true)
+    try {
+      const sources = await window.scryno.captureDualSources(androidId, iosId)
+      if (sources.ok) {
+        const buffer = await compositeDualScreenshot({
+          androidImageSrc: sources.androidImage,
+          iosImageSrc: sources.iosImage,
+          androidLabel: sources.androidName,
+          iosLabel: sources.iosName,
+          mode: 'mockup'
+        })
+        const saved = await window.scryno.saveDualScreenshot(buffer)
+        if (saved.ok) {
+          setFlash(true)
+          setTimeout(() => setFlash(false), 500)
+          void window.scryno.closeDualAnnotations(androidId, iosId)
+          if (saved.path) {
+            await window.scryno.revealCapture(saved.path)
+          }
+        } else {
+          setFlashErr(true)
+          setTimeout(() => setFlashErr(false), 800)
+        }
+      } else {
+        console.error('[DualScreenshot] Failed:', sources.message)
+        setFlashErr(true)
+        setTimeout(() => setFlashErr(false), 800)
+      }
+    } catch (e) {
+      console.error('[DualScreenshot] Error:', e)
+      setFlashErr(true)
+      setTimeout(() => setFlashErr(false), 800)
+    } finally {
+      setBusy(false)
+    }
+  }, [androidId, iosId, busy])
+
+  const toggleDualVideo = useCallback(async () => {
+    if (busy) return
+    setBusy(true)
+    try {
+      if (recording) {
+        setMerging(true)
+        const res = await window.scryno.stopDualRecording(androidId, iosId)
+        setRecording(false)
+        setMerging(false)
+        void window.scryno.closeDualAnnotations(androidId, iosId)
+        if (res.ok && res.path) {
+          await window.scryno.revealCapture(res.path)
+        } else {
+          setFlashErr(true)
+          setTimeout(() => setFlashErr(false), 800)
+        }
+      } else {
+        const res = await window.scryno.startDualRecording(androidId, iosId)
+        if (res.ok) {
+          setRecording(true)
+        } else {
+          console.error('[DualVideo] Failed to start:', res.message)
+          setFlashErr(true)
+          setTimeout(() => setFlashErr(false), 800)
+        }
+      }
+    } catch (e) {
+      console.error('[DualVideo] Error:', e)
+      setFlashErr(true)
+      setTimeout(() => setFlashErr(false), 800)
+    } finally {
+      setMerging(false)
+      setBusy(false)
+    }
+  }, [androidId, iosId, recording, busy])
+
+  const formatTimer = (s: number) => {
+    const mins = String(Math.floor(s / 60)).padStart(2, '0')
+    const secs = String(s % 60).padStart(2, '0')
+    return `${mins}:${secs}`
+  }
+
+  return (
+    <div className="dual-chrome vertical">
+      <div
+        className="dual-chrome-brand"
+        title="Birlikte Taşı (Sürükle ya da çift tıklayarak ekranı ortala)"
+        onDoubleClick={() => void window.scryno.alignDualMirrors()}
+      >
+        <div className="dual-drag-handle">
+          <span />
+          <span />
+          <span />
+        </div>
+        <IconSparkle size={12} />
+        <span>Dual</span>
+      </div>
+      {merging ? (
+        <span className="dual-chrome-timer merging" title="Videolar yan yana birleştiriliyor…">
+          <span className="mini-spinner" />
+        </span>
+      ) : recording ? (
+        <span className="dual-chrome-timer">{formatTimer(seconds)}</span>
+      ) : null}
+      <div className="chrome-actions">
+        <button
+          type="button"
+          className={`chrome-btn ${flash ? 'flash-ok' : ''} ${flashErr ? 'flash-err' : ''}`}
+          disabled={busy || merging}
+          title="Yan yana Screenshot al (Panoya kopyalanır)"
+          onClick={() => void runDualScreenshot()}
+        >
+          <IconCamera />
+        </button>
+        <button
+          type="button"
+          className={`chrome-btn ${recording ? 'live' : ''} ${merging ? 'merging' : ''} ${flashErr ? 'flash-err' : ''}`}
+          disabled={busy || merging}
+          title={
+            merging
+              ? 'Videolar birleştiriliyor…'
+              : recording
+                ? 'Kaydı Bitir ve Tek Video Olarak Birleştir'
+                : 'Yan yana tek video kaydet'
+          }
+          onClick={() => void toggleDualVideo()}
+        >
+          {merging ? <span className="mini-spinner" /> : <IconVideo live={recording} />}
+        </button>
+        <button
+          type="button"
+          className="chrome-btn"
+          disabled={busy || merging}
+          title="Çizim yap / Vurgula (Her iki cihaz)"
+          aria-label="Çizim yap"
+          onClick={() => {
+            void window.scryno.toggleDualAnnotations(androidId, iosId)
+          }}
+        >
+          <IconPencil />
+        </button>
+        <button
+          type="button"
+          className="chrome-btn"
+          title="İki ekranı ortala ve kenetle"
+          aria-label="İki ekranı ortala ve kenetle"
+          onClick={() => void window.scryno.alignDualMirrors()}
+        >
+          <IconRefresh size={14} />
+        </button>
+        <button
+          type="button"
+          className="chrome-btn"
+          title="İndirilenler/Scryno klasörünü aç"
+          onClick={() => void window.scryno.openCaptureDir()}
+        >
+          <IconFolder size={15} />
+        </button>
+        <button
+          type="button"
+          className="chrome-btn chrome-btn-close"
+          title="Kapat"
+          onClick={() => void window.scryno.closeDualToolbar()}
+        >
+          <IconClose size={12} />
+        </button>
+      </div>
+    </div>
+  )
+}
+
 const root = document.getElementById('root')
 if (root) {
+  const isDual = new URLSearchParams(window.location.search).get('mode') === 'dual'
   createRoot(root).render(
     <StrictMode>
-      <ToolbarApp />
+      {isDual ? <DualToolbarApp /> : <ToolbarApp />}
     </StrictMode>
   )
 }

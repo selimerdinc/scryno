@@ -6,6 +6,7 @@ import {
   moveMirrorWindow,
   type MirrorWindowBounds
 } from './mirrorWindowBounds'
+import { bringAllMirrorsToFront } from './mirrorLayout'
 import {
   closeAllNativeChromes,
   closeNativeChrome,
@@ -305,6 +306,10 @@ export function showMirrorToolbar(deviceId: string, options: MirrorToolbarOption
       win.showInactive()
       void refreshToolbars()
     }
+  })
+
+  win.on('focus', () => {
+    void bringAllMirrorsToFront(deviceId)
   })
 
   win.on('move', () => {

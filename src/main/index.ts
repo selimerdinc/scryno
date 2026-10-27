@@ -6,12 +6,15 @@ import {
   isMirrorRecording,
   killOrphanedScrcpy,
   listSessions,
+  setMirrorFocusHandler,
   setSessionExitListener,
   startMirrorRecording,
   startScrcpySession,
   stopAllSessions,
   stopMirrorRecording,
-  stopScrcpySession
+  stopScrcpySession,
+  isAndroidAnnotationsOpen,
+  setAndroidAnnotations
 } from './android/scrcpySession'
 import {
   connectWireless,
@@ -32,20 +35,25 @@ import {
   stopAllIosMirrors,
   stopIosMirror
 } from './ios/mirror'
-import { isIosRecording, startIosRecording, stopIosRecording } from './ios/recording'
+import { isIosRecording, listIosRecordings, startIosRecording, stopIosRecording } from './ios/recording'
 import {
+  activateIphoneMirroring,
   captureIphoneMirroringScreenshot,
   enlargeIphoneMirroring,
   isIphoneMirroringRecording,
+  listIphoneMirroringRecordings,
   startIphoneMirroringRecording,
   stopIphoneMirroringRecording
 } from './ios/iphoneMirroring'
-import { writeFile } from 'fs/promises'
+import { execFileSync } from 'child_process'
+import { existsSync, rmSync } from 'fs'
+import { unlink, writeFile } from 'fs/promises'
 import { requestIosPair } from './ios/readiness'
 import { probeUsbmux } from './ios/usbmux'
 import { getCaptureDir, makeCapturePath } from './media/capturePaths'
 import {
   isRecording,
+  listAdbRecordings,
   startAdbRecording,
   stopAdbRecording,
   stopAllAdbRecordings
@@ -53,6 +61,15 @@ import {
 import { copyImageFileToClipboard } from './media/clipboardImage'
 import { captureDevicePreview } from './media/preview'
 import { takeAndroidScreenshot, takeIosScreenshot } from './media/screenshot'
+import { resolveBinary } from './paths'
+import { captureDualRawSources, saveDualScreenshot } from './media/dualCapture'
+import {
+  clearDualRecordingActive,
+  isDualRecordingActive,
+  mergeDualVideos,
+  preserveDualSources,
+  setDualRecordingActive
+} from './media/dualVideo'
 import {
   broadcastToolbarStatus,
   closeAllMirrorToolbars,
@@ -61,16 +78,37 @@ import {
   type ToolbarOrientation
 } from './ui/mirrorToolbar'
 import {
+  checkAndOpenDualToolbar,
+  closeDualToolbar,
+  getAndroidWindowBounds,
+  isDualToolbarOpen,
+  openDualToolbar,
+  startDualToolbarWatcher
+} from './ui/dualToolbar'
+import { findMirrorWindowBounds } from './ui/mirrorWindowBounds'
+
+// Ensure standard macOS bin paths (Homebrew, /usr/local/bin) are in PATH for child processes
+if (process.platform === 'darwin') {
+  const extraPaths = ['/opt/homebrew/bin', '/usr/local/bin']
+  const currentPath = process.env.PATH || ''
+  const missing = extraPaths.filter((p) => !currentPath.includes(p) && existsSync(p))
+  if (missing.length > 0) {
+    process.env.PATH = `${missing.join(':')}:${currentPath}`
+  }
+}
+import {
   setChromeActionHandler,
+  setChromeActivateHandler,
   setChromeReadyHandler,
   type ChromeAction
 } from './ui/nativeChrome'
 import {
   toggleMirrorOverlay,
   closeMirrorOverlay,
-  closeAllMirrorOverlays
+  closeAllMirrorOverlays,
+  isMirrorOverlayOpen
 } from './ui/mirrorOverlay'
-import { alignMirrorWindows } from './ui/mirrorLayout'
+import { alignMirrorWindows, bringAllMirrorsToFront } from './ui/mirrorLayout'
 import type { ApiError, DeviceInfo, MirrorOptions } from '../shared/types'
 
 const isDev = !app?.isPackaged
@@ -93,8 +131,11 @@ function scheduleMirrorAlign(): void {
   }
   alignTimer = setTimeout(() => {
     alignTimer = null
-    void alignMirrorWindows()
-  }, 900)
+    void (async () => {
+      await alignMirrorWindows()
+      await checkAndOpenDualToolbar()
+    })()
+  }, 350)
 }
 
 function createWindow(): void {
@@ -140,10 +181,11 @@ function createWindow(): void {
   })
 
   win.webContents.on('did-fail-load', () => {
-    if (isDev && process.env['ELECTRON_RENDERER_URL']) {
+    const rendererUrl = process.env['ELECTRON_RENDERER_URL']
+    if (isDev && rendererUrl) {
       setTimeout(() => {
         if (win && !win.isDestroyed()) {
-          void win.loadURL(process.env['ELECTRON_RENDERER_URL'])
+          void win.loadURL(rendererUrl)
         }
       }, 400)
     }
@@ -175,12 +217,109 @@ function createWindow(): void {
   }
 }
 
+function resolveTargetDeviceId(deviceId?: string): string {
+  if (!deviceId || deviceId === 'android') {
+    const s = listSessions()
+    if (s.length > 0) return s[0].deviceId
+    try {
+      const adb = resolveBinary('adb')
+      const out = execFileSync(adb, ['devices'], { encoding: 'utf8', timeout: 2000 })
+      const lines = out.split('\n').filter((l) => l.includes('\tdevice'))
+      if (lines.length > 0) {
+        return lines[0].split('\t')[0].trim()
+      }
+    } catch {
+      // ignore
+    }
+    return 'android'
+  }
+  if (!deviceId || deviceId === 'ios') {
+    const s = listIosMirrorSessions()
+    if (s.length > 0) return s[0].deviceId
+    return '@iphone-mirroring'
+  }
+  return deviceId
+}
+
+function isIphoneTarget(deviceId: string): boolean {
+  if (isIphoneMirroringSession(deviceId)) return true
+  const norm = deviceId.toLowerCase()
+  if (
+    deviceId === 'ios' ||
+    deviceId === '@iphone-mirroring' ||
+    norm.includes('ios') ||
+    norm.includes('iphone')
+  ) {
+    return true
+  }
+  if (isIphoneMirroringRecording(deviceId)) return true
+  return false
+}
+
+interface RecentRecording {
+  path: string
+  platform: 'android' | 'ios'
+  deviceId: string
+  timestamp: number
+}
+
+let recentRecordings: RecentRecording[] = []
+
+async function maybeAutoMergeRecentRecordings(newRec: RecentRecording): Promise<string | null> {
+  const now = Date.now()
+  recentRecordings = recentRecordings.filter((r) => now - r.timestamp < 30000 && r.path !== newRec.path)
+
+  const otherIdx = recentRecordings.findIndex(
+    (r) => r.platform !== newRec.platform && existsSync(r.path)
+  )
+
+  if (otherIdx !== -1) {
+    const otherRec = recentRecordings[otherIdx]
+    recentRecordings.splice(otherIdx, 1)
+
+    const androidPath = newRec.platform === 'android' ? newRec.path : otherRec.path
+    const iosPath = newRec.platform === 'ios' ? newRec.path : otherRec.path
+
+    if (existsSync(androidPath) && existsSync(iosPath)) {
+      try {
+        console.log(`[AutoMerge] Merging dual recordings: ${androidPath} + ${iosPath}`)
+        const merged = await mergeDualVideos(androidPath, iosPath)
+        try {
+          if (existsSync(androidPath)) await unlink(androidPath)
+          if (existsSync(iosPath)) await unlink(iosPath)
+        } catch {
+          // Ignore unlink errors
+        }
+
+        shell.showItemInFolder(merged.path)
+        broadcastToolbarStatus(newRec.deviceId, {
+          recording: false,
+          message: 'Yan yana tek video kaydedildi!',
+          kind: 'ok'
+        })
+        broadcastToolbarStatus(otherRec.deviceId, {
+          recording: false,
+          message: 'Yan yana tek video kaydedildi!',
+          kind: 'ok'
+        })
+        return merged.path
+      } catch (err) {
+        console.error('[AutoMerge] Failed to auto-merge dual videos:', err)
+      }
+    }
+  }
+
+  recentRecordings.push(newRec)
+  return null
+}
+
 function isRecordingFor(deviceId: string): boolean {
+  const targetId = resolveTargetDeviceId(deviceId)
   return (
-    isIphoneMirroringRecording(deviceId) ||
-    isIosRecording(deviceId) ||
-    isMirrorRecording(deviceId) ||
-    isRecording(deviceId)
+    isIphoneMirroringRecording(targetId) ||
+    isIosRecording(targetId) ||
+    isMirrorRecording(targetId) ||
+    isRecording(targetId)
   )
 }
 
@@ -207,19 +346,37 @@ async function stopMirrorFor(deviceId: string): Promise<void> {
   }
   stopScrcpySession(deviceId)
   closeMirrorToolbar(deviceId)
+  const remainingAndroid = listSessions()
+  const remainingIos = listIosMirrorSessions()
+  if (remainingAndroid.length === 0 || remainingIos.length === 0) {
+    closeDualToolbar()
+  }
 }
 
 async function screenshotFor(
   deviceId: string,
   platform: DeviceInfo['platform']
 ): Promise<{ path: string; message: string; copiedToClipboard: boolean }> {
-  const result = isIphoneMirroringSession(deviceId)
+  const targetId = resolveTargetDeviceId(deviceId)
+  const result = (isIphoneMirroringSession(targetId) || isIphoneTarget(targetId))
     ? await captureIphoneMirroringScreenshot()
     : platform === 'ios'
-      ? await takeIosScreenshot(deviceId)
-      : await takeAndroidScreenshot(deviceId)
+      ? await takeIosScreenshot(targetId)
+      : await takeAndroidScreenshot(targetId)
 
   const copiedToClipboard = copyImageFileToClipboard(result.path)
+
+  if (isIphoneMirroringSession(targetId) || isIphoneTarget(targetId) || platform === 'ios') {
+    closeMirrorOverlay(deviceId)
+    closeMirrorOverlay(targetId)
+    closeMirrorOverlay('@iphone-mirroring')
+  } else {
+    void setAndroidAnnotations(targetId, false)
+    if (deviceId !== targetId) {
+      void setAndroidAnnotations(deviceId, false)
+    }
+  }
+
   broadcastToolbarStatus(deviceId, {
     recording: isRecordingFor(deviceId),
     message: copiedToClipboard ? 'Kaydedildi · panoya kopyalandı' : 'Ekran görüntüsü kaydedildi',
@@ -234,34 +391,74 @@ async function screenshotFor(
   }
 }
 
-function startRecordingFor(deviceId: string): void {
-  const iosHub = getIosFrameHub(deviceId)
-  if (isIphoneMirroringSession(deviceId)) {
-    startIphoneMirroringRecording(deviceId)
+function startRecordingFor(deviceId: string, isDual = false): void {
+  const targetId = resolveTargetDeviceId(deviceId)
+  console.log(`[Recording] startRecordingFor target=${targetId}, isDual=${isDual}, isIphone=${isIphoneTarget(targetId)}`)
+  const iosHub = getIosFrameHub(targetId)
+  if (isIphoneTarget(targetId)) {
+    startIphoneMirroringRecording(targetId, isDual)
   } else if (iosHub) {
-    startIosRecording(deviceId, iosHub)
-  } else if (getSession(deviceId)) {
-    startMirrorRecording(deviceId)
+    startIosRecording(targetId, iosHub, isDual)
+  } else if (getSession(targetId)) {
+    startMirrorRecording(targetId, isDual)
   } else {
-    startAdbRecording(deviceId)
+    startAdbRecording(targetId, isDual)
   }
-  broadcastToolbarStatus(deviceId, { recording: true, message: 'Kayıt başladı', kind: 'info' })
+  const msg = isDual ? 'Dual kayıt başladı' : 'Kayıt başladı'
+  broadcastToolbarStatus(deviceId, { recording: true, message: msg, kind: 'info' })
+  if (targetId !== deviceId) {
+    broadcastToolbarStatus(targetId, { recording: true, message: msg, kind: 'info' })
+  }
 }
 
-async function stopRecordingFor(deviceId: string): Promise<{ path: string }> {
+async function stopRecordingFor(deviceId: string, isDual = false): Promise<{ path: string }> {
+  const targetId = resolveTargetDeviceId(deviceId)
+  console.log(`[Recording] stopRecordingFor target=${targetId}, isDual=${isDual}, isIphone=${isIphoneTarget(targetId)}`)
   try {
-    const result = isIphoneMirroringRecording(deviceId)
-      ? await stopIphoneMirroringRecording(deviceId)
-      : isIosRecording(deviceId)
-        ? await stopIosRecording(deviceId)
-        : isMirrorRecording(deviceId)
-          ? await stopMirrorRecording(deviceId)
-          : await stopAdbRecording(deviceId)
-    broadcastToolbarStatus(deviceId, {
-      recording: false,
-      message: 'Kayıt İndirilenler’e alındı',
-      kind: 'ok'
-    })
+    const result = isIphoneTarget(targetId)
+      ? await stopIphoneMirroringRecording(targetId)
+      : isIosRecording(targetId)
+        ? await stopIosRecording(targetId)
+        : isMirrorRecording(targetId)
+          ? await stopMirrorRecording(targetId)
+          : await stopAdbRecording(targetId)
+
+    if (!isDual && !isDualRecordingActive()) {
+      closeAllMirrorOverlays()
+      void setAndroidAnnotations(targetId, false)
+      if (deviceId !== targetId) {
+        void setAndroidAnnotations(deviceId, false)
+      }
+      broadcastToolbarStatus(deviceId, {
+        recording: false,
+        message: 'Kayıt İndirilenler’e alındı',
+        kind: 'ok'
+      })
+      if (targetId !== deviceId) {
+        broadcastToolbarStatus(targetId, {
+          recording: false,
+          message: 'Kayıt İndirilenler’e alındı',
+          kind: 'ok'
+        })
+      }
+
+      const platform: 'android' | 'ios' =
+        isIphoneTarget(targetId) || isIosRecording(targetId) || isIosMirroring(targetId)
+          ? 'ios'
+          : 'android'
+
+      const mergedPath = await maybeAutoMergeRecentRecordings({
+        path: result.path,
+        platform,
+        deviceId: targetId,
+        timestamp: Date.now()
+      })
+
+      if (mergedPath) {
+        return { path: mergedPath }
+      }
+    }
+
     return result
   } catch (error) {
     broadcastToolbarStatus(deviceId, {
@@ -392,10 +589,12 @@ function registerIpc(): void {
         if (platform === 'ios') {
           const session = await startIosMirror(deviceId, label)
           scheduleMirrorAlign()
+          void checkAndOpenDualToolbar()
           return { ok: true as const, session }
         }
         const session = await startScrcpySession(deviceId, options ?? {}, label || deviceId)
         scheduleMirrorAlign()
+        void checkAndOpenDualToolbar()
         return { ok: true as const, session }
       } catch (error) {
         return toApiError(error, 'START_MIRROR_FAILED')
@@ -676,6 +875,221 @@ function registerIpc(): void {
     }
   )
 
+  ipcMain.handle(
+    'media:capture-dual-sources',
+    async (_event, androidId: string, iosId: string, androidName?: string, iosName?: string) => {
+      try {
+        return await captureDualRawSources(androidId, iosId, androidName, iosName)
+      } catch (error) {
+        return toApiError(error, 'DUAL_CAPTURE_FAILED')
+      }
+    }
+  )
+
+  ipcMain.handle('media:save-dual-screenshot', async (_event, data: Uint8Array) => {
+    try {
+      return await saveDualScreenshot(data)
+    } catch (error) {
+      return toApiError(error, 'DUAL_SAVE_FAILED')
+    }
+  })
+
+  const discardTemp = async (path?: string): Promise<void> => {
+    if (path && existsSync(path)) {
+      try {
+        await unlink(path)
+      } catch {
+        try {
+          rmSync(path, { force: true })
+        } catch {
+          // ignore
+        }
+      }
+    }
+  }
+
+  let dualStopping: Promise<unknown> | null = null
+
+  const stopDualAndMerge = async (androidId: string, iosId: string) => {
+    if (dualStopping) {
+      return dualStopping
+    }
+    const targetAndroid = resolveTargetDeviceId(androidId)
+    const targetIos = resolveTargetDeviceId(iosId)
+    dualStopping = (async () => {
+      let androidPath: string | undefined
+      let iosPath: string | undefined
+      try {
+        console.log(`[DualRecording] Stopping recordings: android=${targetAndroid}, ios=${targetIos}...`)
+        closeAllMirrorOverlays()
+        await setAndroidAnnotations(targetAndroid, false)
+        const [androidRes, iosRes] = await Promise.allSettled([
+          stopRecordingFor(targetAndroid, true),
+          stopRecordingFor(targetIos, true)
+        ])
+        if (androidRes.status === 'rejected') {
+          console.error('[DualRecording] Android stop failed:', androidRes.reason)
+        }
+        if (iosRes.status === 'rejected') {
+          console.error('[DualRecording] iOS stop failed:', iosRes.reason)
+        }
+        androidPath = androidRes.status === 'fulfilled' ? androidRes.value.path : undefined
+        iosPath = iosRes.status === 'fulfilled' ? iosRes.value.path : undefined
+        if (!androidPath || !iosPath) {
+          throw new Error(
+            `Kayıtlardan biri alınamadı: android=${androidPath ? 'ok' : 'hata'}, ios=${iosPath ? 'ok' : 'hata'}`
+          )
+        }
+
+        console.log(`[DualRecording] Merging ${androidPath} and ${iosPath}...`)
+        const merged = await mergeDualVideos(androidPath, iosPath)
+        console.log(`[DualRecording] Merged successfully: ${merged.path}`)
+        shell.showItemInFolder(merged.path)
+        for (const id of [targetAndroid, targetIos, androidId, iosId]) {
+          broadcastToolbarStatus(id, {
+            recording: false,
+            message: 'Yan yana tek video kaydedildi!',
+            kind: 'ok'
+          })
+        }
+        return {
+          ok: true as const,
+          path: merged.path,
+          message: `Yan yana tek video kaydedildi: ${merged.path}`,
+          stopped: true
+        }
+      } catch (error) {
+        console.error('[DualRecording] Merge failed:', error)
+        const saved = preserveDualSources([androidPath, iosPath])
+        androidPath = undefined
+        iosPath = undefined
+        if (saved.length > 0) {
+          shell.showItemInFolder(saved[0])
+          for (const id of [targetAndroid, targetIos, androidId, iosId]) {
+            broadcastToolbarStatus(id, {
+              recording: false,
+              message: 'Birleştirilemedi · ayrı kayıtlar kaydedildi',
+              kind: 'error'
+            })
+          }
+          const base = (error as { message?: string }).message || 'Birleştirme başarısız'
+          return toApiError(
+            Object.assign(new Error(`${base} · Ayrı kayıtlar kaydedildi: ${saved.join(', ')}`), {
+              code: 'DUAL_RECORD_STOP_FAILED'
+            }),
+            'DUAL_RECORD_STOP_FAILED'
+          )
+        }
+        return toApiError(error, 'DUAL_RECORD_STOP_FAILED')
+      } finally {
+        await discardTemp(androidPath)
+        await discardTemp(iosPath)
+        clearDualRecordingActive()
+        dualStopping = null
+      }
+    })()
+    return dualStopping
+  }
+
+  ipcMain.handle('media:dual-recording-state', () => ({
+    recording: isDualRecordingActive() || dualStopping !== null
+  }))
+
+  ipcMain.handle(
+    'media:start-dual-recording',
+    async (_event, androidId: string, iosId: string) => {
+      const targetAndroid = resolveTargetDeviceId(androidId)
+      const targetIos = resolveTargetDeviceId(iosId)
+      // Single source of truth lives here; a stale toolbar click turns into a stop.
+      if (isDualRecordingActive()) {
+        return stopDualAndMerge(targetAndroid, targetIos)
+      }
+      setDualRecordingActive(targetAndroid, targetIos)
+      let androidStarted = false
+      try {
+        console.log(`[DualRecording] Starting dual recording for ${targetAndroid} and ${targetIos}...`)
+        if (isIphoneTarget(targetIos)) {
+          void activateIphoneMirroring().catch(() => undefined)
+        }
+        startRecordingFor(targetAndroid, true)
+        androidStarted = true
+        startRecordingFor(targetIos, true)
+        return { ok: true as const, path: '', message: 'Eşzamanlı kayıt başladı' }
+      } catch (error) {
+        console.error('[DualRecording] Start failed:', error)
+        if (androidStarted) {
+          const res = await stopRecordingFor(targetAndroid, true).catch(() => null)
+          await discardTemp(res?.path)
+        }
+        clearDualRecordingActive()
+        return toApiError(error, 'DUAL_RECORD_START_FAILED')
+      }
+    }
+  )
+
+  ipcMain.handle(
+    'media:stop-dual-recording',
+    async (_event, androidId: string, iosId: string) => {
+      if (!isDualRecordingActive() && !dualStopping) {
+        return { ok: true as const, path: '', message: 'Aktif dual kayıt yok', stopped: true }
+      }
+      return stopDualAndMerge(androidId, iosId)
+    }
+  )
+
+  ipcMain.handle('dual-toolbar:open', async (_event, androidId: string, iosId: string) => {
+    try {
+      await openDualToolbar(androidId, iosId)
+      return { ok: true as const }
+    } catch (error) {
+      return toApiError(error, 'DUAL_TOOLBAR_OPEN_FAILED')
+    }
+  })
+
+  ipcMain.handle('dual-toolbar:close', async () => {
+    closeDualToolbar()
+    return { ok: true as const }
+  })
+
+  const toggleDualAnnotations = async (androidId?: string, iosId?: string) => {
+    const isAndroidOpen = await isAndroidAnnotationsOpen(androidId)
+    const resolvedIos = iosId && isIphoneMirroringSession(iosId) ? '@iphone-mirroring' : (iosId || '@iphone-mirroring')
+    const isIosOpen = isMirrorOverlayOpen(resolvedIos)
+
+    if (isAndroidOpen && isIosOpen) {
+      await setAndroidAnnotations(androidId, false)
+      closeAllMirrorOverlays()
+      return { ok: true, open: false }
+    }
+
+    if (!isAndroidOpen) {
+      await setAndroidAnnotations(androidId, true)
+    }
+    if (!isIosOpen) {
+      await toggleMirrorOverlay(resolvedIos, '@iphone-mirroring')
+    }
+    return { ok: true, open: true }
+  }
+
+  const closeDualAnnotations = async (androidId?: string, _iosId?: string) => {
+    await setAndroidAnnotations(androidId, false)
+    closeAllMirrorOverlays()
+    return { ok: true }
+  }
+
+  ipcMain.handle('dual:toggle-annotations', async (_event, payload?: { androidId?: string; iosId?: string }) => {
+    return toggleDualAnnotations(payload?.androidId, payload?.iosId)
+  })
+
+  ipcMain.handle('dual:close-annotations', async (_event, payload?: { androidId?: string; iosId?: string }) => {
+    return closeDualAnnotations(payload?.androidId, payload?.iosId)
+  })
+
+  ipcMain.handle('dual:align-mirrors', async () => {
+    await alignMirrorWindows()
+    return { ok: true }
+  })
+
   ipcMain.handle('media:open-capture-dir', async () => {
     try {
       const dir = getCaptureDir()
@@ -776,13 +1190,25 @@ app.whenReady().then(() => {
       void stopAdbRecording(deviceId).catch(() => undefined)
     }
     closeMirrorToolbar(deviceId)
+    const remainingAndroid = listSessions()
+    const remainingIos = listIosMirrorSessions()
+    if (remainingAndroid.length === 0 || remainingIos.length === 0) {
+      closeDualToolbar()
+    }
   })
 
   setChromeActionHandler(handleChromeAction)
+  setChromeActivateHandler((deviceId) => {
+    void bringAllMirrorsToFront(deviceId)
+  })
+  setMirrorFocusHandler((deviceId) => {
+    void bringAllMirrorsToFront(deviceId)
+  })
   setChromeReadyHandler((deviceId) => {
     broadcastToolbarStatus(deviceId, { recording: isRecordingFor(deviceId) })
   })
   registerIpc()
+  startDualToolbarWatcher()
   createWindow()
 
   app.on('activate', () => {
@@ -796,7 +1222,53 @@ app.whenReady().then(() => {
   })
 })
 
-function closeCompanionMirrors(): Promise<void> {
+const EXIT_FINALIZE_TIMEOUT_MS = 12_000
+let finalizingRecordings: Promise<void> | null = null
+
+/** Stops every active recording and keeps the files (temp dual parts move to Downloads/Scryno). */
+function finalizeRecordingsBeforeExit(): Promise<void> {
+  if (finalizingRecordings) {
+    return finalizingRecordings
+  }
+  const tasks: Array<Promise<{ path: string }>> = []
+  for (const session of listSessions()) {
+    if (isMirrorRecording(session.deviceId)) {
+      tasks.push(stopMirrorRecording(session.deviceId))
+    }
+  }
+  for (const id of listAdbRecordings()) {
+    tasks.push(stopAdbRecording(id))
+  }
+  for (const id of listIosRecordings()) {
+    tasks.push(stopIosRecording(id))
+  }
+  for (const id of listIphoneMirroringRecordings()) {
+    tasks.push(stopIphoneMirroringRecording(id))
+  }
+  if (tasks.length === 0) {
+    return Promise.resolve()
+  }
+  console.log(`[Exit] Finalizing ${tasks.length} active recording(s)…`)
+  const settled = Promise.allSettled(tasks).then((results) => {
+    const paths = results
+      .filter((r): r is PromiseFulfilledResult<{ path: string }> => r.status === 'fulfilled')
+      .map((r) => r.value.path)
+    preserveDualSources(paths)
+    clearDualRecordingActive()
+  })
+  const timeout = new Promise<void>((resolve) => setTimeout(resolve, EXIT_FINALIZE_TIMEOUT_MS))
+  finalizingRecordings = Promise.race([settled, timeout]).finally(() => {
+    finalizingRecordings = null
+  })
+  return finalizingRecordings
+}
+
+async function closeCompanionMirrors(): Promise<void> {
+  try {
+    await finalizeRecordingsBeforeExit()
+  } catch {
+    // Best-effort; teardown continues regardless.
+  }
   closeAllMirrorOverlays()
   stopAllAdbRecordings()
   closeAllMirrorToolbars()
