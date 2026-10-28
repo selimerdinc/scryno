@@ -1,6 +1,6 @@
 cask "scryno" do
-  version "1.0.9"
-  sha256 "020f1c74a002bbbb9e6170da25f6c75242263732712b89069213c5b9fbce96f5"
+  version "1.0.10"
+  sha256 "6085b038dd15e41a37e373470a8f54c1de78bbbbbd0a2f0244c4775ce005d547"
 
   url "https://github.com/selimerdinc/scryno/releases/download/build-#{version.sub(/^1\.0\./, '')}/Scryno-#{version}-arm64.dmg"
   name "Scryno"
