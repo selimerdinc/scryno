@@ -35,17 +35,24 @@ if (existsSync(releaseDir)) {
 armSha = armSha || '5f8599801130cbe931253a0aed96ebec5535e679c3d49f1aa47291a27e7f9175'
 intelSha = intelSha || armSha
 
+// releases/download GitHub kenarında 504 dönebiliyor. Varlık kimliği bilinince API yönlendirmesi kullanılır.
+const assetId = process.env.ASSET_ID || ''
+const urlStanza = assetId
+  ? `url "https://api.github.com/repos/selimerdinc/scryno/releases/assets/${assetId}",
+      header: "Accept: application/octet-stream"`
+  : `url "https://github.com/selimerdinc/scryno/releases/download/build-#{version.sub(/^1\\.0\\./, '')}/Scryno-#{version}-arm64.dmg"`
+
 const caskContent = `cask "scryno" do
   version "${version}"
   sha256 "${armSha}"
 
-  url "https://github.com/selimerdinc/scryno/releases/download/build-#{version.sub(/^1\\.0\\./, '')}/Scryno-#{version}-arm64.dmg"
+  ${urlStanza}
   name "Scryno"
   desc "Android and iPhone mirroring & control desktop app"
   homepage "https://github.com/selimerdinc/scryno"
 
   livecheck do
-    url :url
+    url "https://github.com/selimerdinc/scryno/releases/latest"
     regex(/build[._-](\\d+)/i)
     strategy :github_latest do |json, regex|
       match = json["tag_name"]&.match(regex)
