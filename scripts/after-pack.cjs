@@ -30,8 +30,16 @@ function relativizeFrameworkSymlinks(dir) {
   }
 }
 
-function adHocSign(target, entitlements) {
-  const args = ['--force', '--sign', '-']
+function signIdentity() {
+  const name = process.env.SCRYNO_SIGN_IDENTITY
+  return name && name !== '-' ? name : '-'
+}
+
+function sign(target, entitlements, identifier) {
+  const args = ['--force', '--sign', signIdentity()]
+  if (identifier) {
+    args.push('--identifier', identifier)
+  }
   if (entitlements) {
     args.push('--entitlements', entitlements)
   }
@@ -39,7 +47,7 @@ function adHocSign(target, entitlements) {
 }
 
 // Nested code must be signed before the bundle that contains it, or the outer seal breaks.
-function signInsideOut(dir) {
+function signInsideOut(dir, binRoot) {
   for (const name of readdirSync(dir)) {
     const file = join(dir, name)
     const stat = lstatSync(file)
@@ -47,26 +55,29 @@ function signInsideOut(dir) {
       continue
     }
     if (stat.isDirectory()) {
-      signInsideOut(file)
+      signInsideOut(file, binRoot)
       if (name.endsWith('.app') || name.endsWith('.framework')) {
-        adHocSign(file)
+        sign(file)
       }
       continue
     }
     if (stat.isFile() && isMachO(file)) {
-      adHocSign(file)
+      const identifier = file.startsWith(binRoot) ? basename(file) : undefined
+      sign(file, undefined, identifier)
     }
   }
 }
 
-/** Ad-hoc signs the whole bundle so macOS offers "Open Anyway" instead of calling it damaged. */
+/** Signs the bundle. A stable identity keeps Screen Recording and Accessibility across versions. */
 module.exports = async function afterPack(context) {
   if (context.electronPlatformName !== 'darwin') {
     return
   }
   const appPath = join(context.appOutDir, `${context.packager.appInfo.productFilename}.app`)
+  const identity = signIdentity()
+  console.log(identity === '-' ? 'codesign: ad-hoc' : `codesign: ${identity}`)
   relativizeFrameworkSymlinks(join(appPath, 'Contents', 'Frameworks'))
-  signInsideOut(join(appPath, 'Contents'))
-  adHocSign(appPath, join(context.packager.info.projectDir, 'build', 'entitlements.mac.plist'))
+  signInsideOut(join(appPath, 'Contents'), join(appPath, 'Contents', 'Resources', 'bin'))
+  sign(appPath, join(context.packager.info.projectDir, 'build', 'entitlements.mac.plist'))
   execFileSync('codesign', ['--verify', '--strict', appPath], { stdio: 'inherit' })
 }
