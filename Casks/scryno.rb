@@ -1,8 +1,8 @@
 cask "scryno" do
-  version "1.0.10"
-  sha256 "6085b038dd15e41a37e373470a8f54c1de78bbbbbd0a2f0244c4775ce005d547"
+  version "1.0.12"
+  sha256 "c547907d305181f4b1dede793c6efc27bd901480718dffebbe7e601ba14720a8"
 
-  url "https://api.github.com/repos/selimerdinc/scryno/releases/assets/684048832",
+  url "https://api.github.com/repos/selimerdinc/scryno/releases/assets/731529140",
       header: "Accept: application/octet-stream"
   name "Scryno"
   desc "Android and iPhone mirroring & control desktop app"
